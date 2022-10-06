@@ -2,3 +2,7 @@
 data
 *.phy
 *.bin
+*.ipynb_checkpoints
+*__pycache__
+*temp_wh
+*.dat
