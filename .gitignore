@@ -6,3 +6,5 @@ data
 *__pycache__
 *temp_wh
 *.dat
+*checkpoint.ipynb
+*.DS_Store
