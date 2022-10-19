@@ -2,7 +2,7 @@ import numpy as np
 from collections import deque
 import burst_detector as bd
 
-def overlap(sp_times, sp_clust, n_clusters, fs):
+def overlap(sp_times, sp_clust, n_clusters, fs, olap_len):
     """
     Calculates the number of spikes that overlap (i.e. spike times within 2 ms) for each 
     pair of clusters.
@@ -18,6 +18,8 @@ def overlap(sp_times, sp_clust, n_clusters, fs):
         The number of clusters.
     fs: int
         Sampling rate of the recording in Hz.
+    olap_len: float
+        Length of window for overlap check in seconds.
         
     Returns
     -------
@@ -26,7 +28,6 @@ def overlap(sp_times, sp_clust, n_clusters, fs):
     """
     
     # count overlapping spikes
-    tmplt_len = 61/fs
     window = deque()
     window_counts = np.zeros(n_clusters)
     olap = np.zeros((n_clusters, n_clusters))
@@ -35,7 +36,7 @@ def overlap(sp_times, sp_clust, n_clusters, fs):
     for i in np.arange(n):
         window.append(i)
         # Boot spikes outside window
-        while (sp_times[i] - sp_times[window[0]]) > tmplt_len:
+        while (sp_times[i] - sp_times[window[0]]) > olap_len:
             old = window.popleft()
             window_counts[sp_clust[old]] -= 1
 
@@ -50,7 +51,7 @@ def overlap(sp_times, sp_clust, n_clusters, fs):
         
     return olap
         
-def overlap_norm(sp_times, sp_clust, n_clusters, fs):
+def overlap_norm(sp_times, sp_clust, n_clusters, fs, olap_len):
     """
     Calculates the proportion of spikes that overlap (i.e. spike times within 2 ms) for each 
     pair of clusters.
@@ -76,7 +77,7 @@ def overlap_norm(sp_times, sp_clust, n_clusters, fs):
     
     """
     
-    olap_norm = overlap(sp_times, sp_clust, n_clusters, fs)
+    olap_norm = overlap(sp_times, sp_clust, n_clusters, fs, olap_len)
     cc = bd.clust_counts(sp_clust, n_clusters)
     
     for i in np.arange(n_clusters):
