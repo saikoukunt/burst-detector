@@ -61,6 +61,30 @@ def find_times_multi(sp_times, sp_clust, clust_ids):
     
     return cl_times
 
+def spikes_per_cluster(sp_clust):
+    """
+    Counts the number of spikes in each cluster.
+    
+    Parameters
+    ----------
+    sp_clust: array_like
+        1-D array containing the cluster identity of each spike.
+        
+    Returns
+    -------
+    counts: array_like
+        1-D array containng the number of spikes in each cluster, where
+        the index is the cluster ID.
+    
+    """
+    
+    counts = np.zeros((sp_clust.max()+1), dtype='uint16')
+    
+    for clust_id in sp_clust:
+        counts[clust_id] += 1
+        
+    return counts
+
 def extract_spikes(data, sp_times, sp_clust, clust_id, pre_samples=20, post_samples=62, n_chan=385):
     """
     Extracts the waveforms for all spikes from the specified cluster.
