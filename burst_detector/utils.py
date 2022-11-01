@@ -44,7 +44,7 @@ def find_times_multi(sp_times, sp_clust, clust_ids):
     Returns
     -------
     cl_times: list
-        2-D list of the spike times for each of the specified clusters.
+        list of NumPy arrays of the spike times for each of the specified clusters.
     """
     
     # init big list and reverse dictionary
@@ -58,6 +58,10 @@ def find_times_multi(sp_times, sp_clust, clust_ids):
     for i in np.arange(sp_times.shape[0]):
         if sp_clust[i] in cl2lind:
             cl_times[cl2lind[sp_clust[i]]].append(sp_times[i])
+            
+    # convert inner lists to numpy arrays
+    for i in range(len(cl_times)):
+        cl_times[i] = np.array(cl_times[i])
     
     return cl_times
 
