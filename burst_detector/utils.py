@@ -26,7 +26,7 @@ def find_times(sp_times, sp_clust, clust_id):
         if sp_clust[i] == clust_id:
             cl_times.append(sp_times[i])
     
-    return np.array(cl_times, dtype='int32')
+    return np.array(cl_times)
 
 def find_times_multi(sp_times, sp_clust, clust_ids):
     """
@@ -82,14 +82,17 @@ def spikes_per_cluster(sp_clust):
     
     """
     
-    counts = np.zeros((sp_clust.max()+1), dtype='uint16')
+    ids, counts = np.unique(sp_clust, return_counts=True)
+    counts = dict(zip(ids, counts))
     
-    for clust_id in sp_clust:
-        counts[clust_id] += 1
+#     counts = np.zeros((sp_clust.max()+1), dtype='uint16')
+    
+#     for clust_id in sp_clust:
+#         counts[clust_id] += 1
         
     return counts
 
-def extract_spikes(data, sp_times, sp_clust, clust_id, pre_samples=20, post_samples=62, n_chan=385):
+def extract_spikes(data, times_multi, sp_clust, clust_id, pre_samples=20, post_samples=62, n_chan=385, max_spikes=-1):
     """
     Extracts the waveforms for all spikes from the specified cluster.
     
@@ -98,8 +101,8 @@ def extract_spikes(data, sp_times, sp_clust, clust_id, pre_samples=20, post_samp
     data: array-like
         electrophysiological data of shape: (# of timepoints, # of channels).
         Should be passed in as an np.memmap for large datasets.
-    sp_times: array_like
-        1-D array containing all spike times.
+    times_multi: list of array_like
+        List containing arrays of spike times indexed by cluster id (e.g. output of find_times_multi).
     sp_clust: array_like
         1-D array containing the cluster identity of each spike.
     clust_id: list
@@ -112,6 +115,9 @@ def extract_spikes(data, sp_times, sp_clust, clust_id, pre_samples=20, post_samp
         Default matches the number in Kilosort templates.
     n_chan: int, optional
         Number of channels in the recording. Default matches Neuropixels probes.
+    max_spikes: int, optional
+        The maximum number of spikes to extract. Spike indices are chosen randomly 
+        if max_spikes < # of spikes. If max_spikes=-1, extracts all spikes.
         
     Returns
     -------
@@ -120,7 +126,12 @@ def extract_spikes(data, sp_times, sp_clust, clust_id, pre_samples=20, post_samp
         Shape is (# of spikes, # of channels, # of timepoints) to match
         ecephys output.
     """
-    times = find_times(sp_times, sp_clust, clust_id)
+    times = times_multi[clust_id].astype("int32")
+    
+    if (max_spikes != -1) and (max_spikes < times.shape[0]):
+        np.random.shuffle(times)
+        times = times[:max_spikes]
+        
     spikes = np.zeros((times.shape[0], n_chan, pre_samples+post_samples))
     
     for i in range(times.shape[0]):

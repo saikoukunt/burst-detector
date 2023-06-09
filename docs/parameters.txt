@@ -1,0 +1,61 @@
+# Parameters that people will probably use
+
+# recording/input info
+
+calc_means (boolean, default=False): True if mean waveforms should be calculated, False if they are being passed in in mean_waveforms.py.
+fs (int, default=30000): sampling frequency of the recording.
+n_chan (int, default=385): number of channels in the recording.
+
+# algorithm parameters
+
+window_size (float, default=0.25): The width in seconds of the cross correlogram window.
+xcorr_bin_width (float, default=0.001): The width in seconds of the bins for cross correlogram calculation.
+xcorr_ref_p (float, default=0.002): Length of refractory period in seconds.
+xcorr_coeff (float, default=0.5): Coefficient applied to cross correlation metric during final metric calculation.
+ref_pen_coeff (float, default=0.5): Coefficient applied to refractory period penalty.
+final_thresh (float, default=0.6): Final metric threshold for merge decisions.
+
+
+
+# ALL PARAMETERS
+
+# Mean waveform calculation
+
+calc_means (boolean, default=False): True if mean waveforms should be calculated, False if they are being passed in in mean_waveforms.py.
+fs (int, default=30000): sampling frequency of the recording.
+n_chan (int, default=385): number of channels in the recording .
+pre_samples (int, default=20): number of samples to extract before the peak of the spike.
+post_samples (int, default=62): number of samples to extract after the peak of the spikes.
+max_spikes (int, default=-1): maximum number of spikes used to calculate mean (-1 uses all spikes).
+
+
+# Mean similarity
+
+jitter (boolean, default=False): True if similarity calculations should check for time shifts between waveforms.
+jitter_amt (int, default=4): For time shift checking, number of samples to search in each direction.
+sim_thresh (float, default=0.4): Mean waveform inner product threshold for a cluster pair to undergo further stages.
+sp_num_thresh (int, default=100): Number of spikes threshold for a cluster pair to undergo futher stages. At least one cluster in the pair must contain more than sp_num_thresh spikes.
+
+# Cross projection similarity
+
+NONE
+
+# Cross correlation metric
+
+n_iter (int, default=50): The number of shuffle iterations for the baseline cross-correlation.
+shuffle_bin_width (float, default=0.1): The width of bins in seconds for spike train shuffling.
+window_size (float, default=0.25): The width in seconds of the cross correlogram window.
+xcorr_bin_width (float, default=0.001): The width in seconds of the bins for cross correlogram calculation.
+overlap_tol (float, default=0): Overlap tolerance in seconds. Spikes within the tolerance of the reference spike time will not be counted for cross correlogram calculation.
+max_window (float, default=0.25): Maximum window size when searching for enough spikes to satisfy min_xcorr_rate.
+min_xcorr_rate (float, default=0): Spike rate threshold (in Hz) for cross correlograms. Cluster pairs whose cross correlogram spike rate is lower than the threshold will have a penalty applied to their cross correlation metric.
+
+# Refractory period penalty (this will probably get reworked)
+
+xcorr_ref_p (float, default=0.001): Length of refractory period in seconds.
+
+# Final metric
+
+xcorr_coeff (float, default=0.5): Coefficient applied to cross correlation metric during final metric calculation.
+ref_pen_coeff (float, default=0.5): Coefficient applied to refractory period penalty.
+final_thresh (float, default=0.7): Final metric threshold for merge decisions.
