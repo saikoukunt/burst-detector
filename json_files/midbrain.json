@@ -1,18 +1,15 @@
 {
     "data_filepath": "C:/Users/Harris_Lab/Projects/burst-detector/data/midbrain_cullen/NPX_001_Session_2_preprocessed.bin",
     "KS_folder": "C:/Users/Harris_Lab/Projects/burst-detector/data/midbrain_cullen/KS2.5_preprocessed",
-    
+
     "calc_means": true,
     "n_chan": 128,
-    "max_spikes": 2000,
-    
+    "max_spikes": 5000,
+
     "jitter": true,
     "jitter_amt": 4,
-    
+    "sim_thresh": 0.4,
+
     "window_size": 0.01,
-    "xcorr_bin_width": 0.0005,
-    "max_window": 0.01,
-    "min_xcorr_rate": 800,
-    
-    "xcorr_ref_p": 0.0005
+    "xcorr_bin_width": 0.0005
 }

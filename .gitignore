@@ -8,3 +8,4 @@ data
 *.dat
 *checkpoint.ipynb
 *.DS_Store
+json_files
