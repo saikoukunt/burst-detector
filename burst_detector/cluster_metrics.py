@@ -3,9 +3,9 @@ import burst_detector as bd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-def normalize_wfs(wfs):
+def calc_wf_norms(wfs):
     """
-    Normalizes a each waveform in an array of waveforms with respect to the Frobenius norm.
+    Calculates the Frobenius norm of each waveform in an array of waveforms.
     
     Parameters
     ----------
@@ -16,23 +16,19 @@ def normalize_wfs(wfs):
         
     Returns
     -------
-    wfs_norm: array-like
+    wf_norm: array-like
         Array of waveforms where each waveform has been normalized to have a Frobenius norm
         of 1. Has same shape as input
     """
-    n_wf = wfs.shape[0]
+    wf_norms = np.zeros(wfs.shape[0])
     
-    wfs_norm = wfs.copy()
-    
-    for i in range(n_wf):
-        norm = np.linalg.norm(wfs[i])
-        if norm > 0:
-            wfs_norm[i] /= norm
+    for i in range(wfs.shape[0]):
+        wf_norms[i] = np.linalg.norm(wfs[i])
             
-    return wfs_norm
+    return wf_norms
 
 
-def wf_means_similarity(mean_wf, jitter=False, jitter_amt = 4):
+def wf_means_similarity(mean_wf, jitter=False, jitter_amt=4):
     """
     Calculates the normalized pairwise similarity (inner product) between every pair of 
     waveforms in an array of waveforms.
@@ -61,25 +57,45 @@ def wf_means_similarity(mean_wf, jitter=False, jitter_amt = 4):
         Array containing normalized input waveforms, where each waveform is normalized with
         respect to its Frobenius norm.
     """
+#     n_clust = mean_wf.shape[0]
+#     mean_sim = np.zeros((n_clust, n_clust))
+#     offsets = np.zeros((n_clust, n_clust), dtype='int16')
+#     mean_wf_norm = normalize_wfs(mean_wf)
+        
+#     for i in range(n_clust):
+#         for j in range(n_clust):
+#             if i != j:
+#                 if jitter:
+#                     sim, off = sim_jitter(mean_wf_norm[i], mean_wf_norm[j], jitter_amt)
+#                     mean_sim[i, j] = sim
+#                     offsets[i,j] = off
+#                 else:
+#                     mean_sim[i,j] = np.dot(mean_wf_norm[i].flatten(), mean_wf_norm[j].flatten())
+        
+#     return mean_sim, offsets, mean_wf_norm
+
     n_clust = mean_wf.shape[0]
     mean_sim = np.zeros((n_clust, n_clust))
     offsets = np.zeros((n_clust, n_clust), dtype='int16')
-    mean_wf_norm = normalize_wfs(mean_wf)
-        
+    wf_norms = calc_wf_norms(mean_wf)
+    
     for i in range(n_clust):
         for j in range(n_clust):
             if i != j:
+                norm = max(wf_norms[i], wf_norms[j])
+                if norm == 0:
+                    continue
+                
                 if jitter:
-                    sim, off = sim_jitter(mean_wf_norm[i], mean_wf_norm[j], jitter_amt)
-                    mean_sim[i, j] = sim
+                    sim, off = sim_jitter(mean_wf[i], mean_wf[j], norm, jitter_amt)
+                    mean_sim[i, j] = sim/(norm**2)
                     offsets[i,j] = off
                 else:
-                    mean_sim[i,j] = np.dot(mean_wf_norm[i].flatten(), mean_wf_norm[j].flatten())
-        
-    return mean_sim, offsets, mean_wf_norm
+                    mean_sim[i, j] = np.dot(mean_wf[i].flatten(), mean_wf[j].flatten())/(norm**2)
+                    
+    return mean_sim, wf_norms, offsets
 
-
-def sim_jitter(m1, m2, jitter_amt):
+def sim_jitter(m1, m2, norm, jitter_amt):
     """
     Calculates the maximum inner product between two waveforms with respect to a time shift.
     
@@ -87,6 +103,8 @@ def sim_jitter(m1, m2, jitter_amt):
     ----------
     m1, m2: array-like
         2-D input waveforms of shape (# of channels, # of timepoints)
+    norm: float
+        max of the 2-norms of the input waveforms
     jitter_amt: int
         Number of samples to time-shift in each direction.
         
@@ -116,14 +134,14 @@ def sim_jitter(m1, m2, jitter_amt):
             mean_sim = off_sim
             offset = i
 
-        if mean_sim - np.dot(m1.flatten(),m2.flatten()) < .1:
+        if (mean_sim - np.dot(m1.flatten(),m2.flatten())) < .1:
             mean_sim = np.dot(m1.flatten(),m2.flatten())
             offset = 0
             
     return mean_sim, offset
 
 
-def cross_proj(c1_spikes, c2_spikes, c1_mean_norm, c2_mean_norm, offset=0, norm=True):
+def cross_proj(c1_spikes, c2_spikes, c1_mean, c2_mean, c1_norm, c2_norm, offset=0):
     """
     Returns the cross-projections of spikes onto normalized mean waveforms for a 
     pair of clusters.
@@ -133,40 +151,34 @@ def cross_proj(c1_spikes, c2_spikes, c1_mean_norm, c2_mean_norm, offset=0, norm=
     c1_spikes, c2_spikes: array-like
         An array of spikes in the specified cluster with shape (# of spikes, # of channels, 
         # of timepoints).
-    c1_mean_norm, c2_mean_norm: array_like
-        The normalized mean waveform for the respective cluster. Should have shape (# of channels, # of 
+    c1_mean, c2_mean: array_like
+        The mean waveform for the respective cluster. Should have shape (# of channels, # of 
         timepoints)
+    c1_norm, c2_norm : array_like
+       Frobenius norms for the mean waveform of the respective cluster
     offset: int
         Offset to time-shift spikes and means by before projection.
-    norm: boolean, optional
-        If True, spike waveforms are normalized with respect to their Frobenius norms
-        before projection. True by default.
         
     Returns
     -------
     proj_1on1, proj_2on1, proj_1on2, proj_2on2: array-like
         1-D arrays containing the projections of spikes onto mean waveforms. 
     """    
-    
-    if norm:
-        c1_spikes = normalize_wfs(c1_spikes)
-        c2_spikes = normalize_wfs(c2_spikes)
-        
     t_length = c1_spikes.shape[2]
     
     # adjust for offset
     if offset < 0:
         c1_spikes = c1_spikes[:,:,:t_length+offset]
-        c1_mean_norm = c1_mean_norm[:,:t_length+offset]
+        c1_mean = c1_mean[:,:t_length+offset]
         
         c2_spikes = c2_spikes[:,:,offset*-1:]
-        c2_mean_norm = c2_mean_norm[:,offset*-1:]
+        c2_mean = c2_mean[:,offset*-1:]
     else:
         c1_spikes = c1_spikes[:,:,offset:]
-        c1_mean_norm = c1_mean_norm[:,offset:]
+        c1_mean = c1_mean[:,offset:]
     
         c2_spikes = c2_spikes[:,:,:t_length-offset]
-        c2_mean_norm = c2_mean_norm[:,:t_length-offset]
+        c2_mean = c2_mean[:,:t_length-offset]
         
     # init output arrays
         
@@ -177,13 +189,15 @@ def cross_proj(c1_spikes, c2_spikes, c1_mean_norm, c2_mean_norm, offset=0, norm=
     proj_2on2 = np.zeros((c2_spikes.shape[0]))
     
     # calculate cross-projections
+    norm = max(c1_norm, c2_norm)
+    
     for i in range(c1_spikes.shape[0]):
-        proj_1on1[i] = np.dot(c1_spikes[i].flatten(), c1_mean_norm.flatten())
-        proj_1on2[i] = np.dot(c1_spikes[i].flatten(), c2_mean_norm.flatten())
+        proj_1on1[i] = np.dot(c1_spikes[i].flatten(), c1_mean.flatten())/(c1_norm**2)
+        proj_1on2[i] = np.dot(c1_spikes[i].flatten(), c2_mean.flatten())/(norm**2)
         
     for i in range(c2_spikes.shape[0]):
-        proj_2on1[i] = np.dot(c2_spikes[i].flatten(), c1_mean_norm.flatten())
-        proj_2on2[i] = np.dot(c2_spikes[i].flatten(), c2_mean_norm.flatten())
+        proj_2on1[i] = np.dot(c2_spikes[i].flatten(), c1_mean.flatten())/(norm**2)
+        proj_2on2[i] = np.dot(c2_spikes[i].flatten(), c2_mean.flatten())/(c2_norm**2)
         
     return proj_1on1, proj_2on1, proj_1on2, proj_2on2
 

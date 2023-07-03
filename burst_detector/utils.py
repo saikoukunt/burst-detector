@@ -199,3 +199,41 @@ def clust_counts(sp_clust, n_clusters):
         counts[sp_clust[i]] += 1
     
     return counts
+
+def get_closest_channels(channel_positions, channel_index, n=None):
+    """Get the channels closest to a given channel on the probe."""
+    x = channel_positions[:, 0]
+    y = channel_positions[:, 1]
+    x0, y0 = channel_positions[channel_index]
+    d = (x - x0) ** 2 + (y - y0) ** 2
+    out = np.argsort(d)
+    if n:
+        out = out[:n]
+    return out
+
+def find_best_channels(template, channel_pos):
+    amplitude_threshold = 0
+    
+    amplitude = template.max(axis=1) - template.min(axis=1)
+    best_channel = min(np.argmax(amplitude), 382)
+    max_amp = amplitude[best_channel]
+    
+    peak_channels = np.nonzero(amplitude >= amplitude_threshold * max_amp)[0]
+    
+    close_channels = get_closest_channels(channel_pos, best_channel, 8)
+
+    channel_shanks = (channel_pos[:,0]/250).astype("int")
+    shank = channel_shanks[best_channel]
+    channels_on_shank = np.nonzero(channel_shanks == shank)[0]
+    close_channels = np.intersect1d(close_channels, channels_on_shank)
+    channel_ids = np.intersect1d(close_channels, peak_channels)
+    
+    return channel_ids, best_channel
+
+def get_dists(channel_positions, ref_chan, target_chan):
+    x = channel_positions[:, 0]
+    y = channel_positions[:, 1]
+    x0, y0 = channel_positions[ref_chan]
+    d = (x - x0) ** 2 + (y - y0) ** 2
+    # d[y < y0] *= -1
+    return d[target_chan]

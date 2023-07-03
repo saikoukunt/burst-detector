@@ -31,7 +31,7 @@ def calc_mean_sim(data, times, clusters, counts, n_clust, labels, mean_wf, param
                 mean_wf[i,:,:] = np.nanmean(spikes, axis=0)
     
     # calculate mean similarity
-    mean_sim, offset, wf_means_norm = bd.wf_means_similarity(
+    mean_sim, wf_norms, offset = bd.wf_means_similarity(
         mean_wf, 
         jitter=params['jitter'],
         jitter_amt=params['jitter_amt']
@@ -47,10 +47,10 @@ def calc_mean_sim(data, times, clusters, counts, n_clust, labels, mean_wf, param
                         pass_ms[c1,c2] = True
                         pass_ms[c2,c1] = True
 
-    return mean_sim, offset, wf_means_norm, mean_wf, pass_ms
+    return mean_sim, offset, wf_norms, mean_wf, pass_ms
 
 
-def calc_cross_sim(spikes, wf_means_norm, offset, pass_ms, n_clust):
+def calc_cross_sim(spikes, offset, mean_wf, wf_norms, pass_ms, n_clust):
     wass_d = np.ones_like(offset, dtype='float64')
     num = 0
     
@@ -69,8 +69,10 @@ def calc_cross_sim(spikes, wf_means_norm, offset, pass_ms, n_clust):
                 proj_1on1, proj_2on1, proj_1on2, proj_2on2 = bd.cross_proj(
                     sp_1,
                     sp_2,
-                    wf_means_norm[c1],
-                    wf_means_norm[c2],
+                    mean_wf[c1],
+                    mean_wf[c2],
+                    wf_norms[c1],
+                    wf_norms[c2],
                     offset=offset[c1, c2]
                 )
                 
@@ -214,7 +216,7 @@ def recalc_ref_p(pairs, times, clusters, counts, params):
 
     return ref_pen, ref_per
 
-def merge_clusters(times, clusters, counts, n_clust, final_metric, cross_sim, xcorr_sig, ref_pen, mean_wf, channel_map, params):
+def merge_clusters(clusters, counts, mean_wf, final_metric, params):
     cl_max = clusters.max()
     
     # find channel with peak amplitude for each cluster
@@ -238,130 +240,57 @@ def merge_clusters(times, clusters, counts, n_clust, final_metric, cross_sim, xc
     new2old = {}
     old2new = {}
     new_ind = int(clusters.max() + 1)
-    rejected = []
-    orig_cl = cross_sim.shape[0] 
     
     # convert counts to array
-    temp = np.zeros(n_clust)
-    for i in range(n_clust):
+    temp = np.zeros(cl_max)
+    for i in range(cl_max):
         if i in counts:
             temp[i] = counts[i]
     counts = temp
 
     # merge logic
-    while pairs:
-        n = len(pairs)
-        for i in range(n):
-            pair = pairs.popleft(); c1 = int(pair[0]); c2 = int(pair[1])
+    for pair in pairs:
+        c1 = int(pair[0]); c2 = int(pair[1])
+
+        # both clusters are original
+        if c1 not in old2new and c2 not in old2new:
+            old2new[c1] = int(new_ind)
+            old2new[c2] = int(new_ind)
+            new2old[new_ind] = [c1, c2]
+            new_ind += 1
+
+        # one or more clusters has been merged already
+        else:
+            # get un-nested cluster list
+            cl1 = new2old[old2new[c1]] if c1 in old2new else [c1]
+            cl2 = new2old[old2new[c2]] if c2 in old2new else [c2]
+            if cl1 == cl2:
+                continue
+            cl_list = cl1 + cl2
             
-            if (c1 not in old2new) and (c2 not in old2new): # check if one of clusters has already been merged
-                # threshold metric if needed
-                if (c1 < orig_cl) and (c2 < orig_cl):
-                    merge = True
-                else:
-                    metric = np.sqrt(cross_sim[c1,c2]*cross_sim[c2,c1]) + params["xcorr_coeff"]*xcorr_sig[c1,c2] \
-                    - params["ref_pen_coeff"]*ref_pen[c1,c2]
-                    merge = metric > params['final_thresh']
-                # perform merge
-                if merge:
-                    old2new[c1] = new_ind
-                    old2new[c2] = new_ind
-                    new2old[new_ind] = (c1, c2)
-                    new_ind += 1
-                else:
-                    rejected.append((c1,c2))
-            else:
-                # convert merged clusters ids to new ones
-                if c1 in old2new:
-                    c1 = old2new[c1]
-                if c2 in old2new:
-                    c2 = old2new[c2]
-                if c1 != c2:
-                    pairs.append((c1,c2))
+            # iterate through cluster pairs
+            merge = True
+            for i in range(len(cl_list)):
+                for j in range(i+1, len(cl_list)):
+                    i1 = cl_list[i]
+                    i2 = cl_list[j]
                     
-        # edge case id conversion
-        for i in range(len(pairs)):
-            c1 = pairs[i][0]
-            c2 = pairs[i][1]
-            if c1 in old2new:
-                c1 = old2new[c1]
-            if c2 in old2new:
-                c2 = old2new[c2]
-            pairs[i] = (c1,c2)
-            
-            
-        # update cross_sim with weighted avg
-        nc = counts / counts.max() # prescale to prevent overflow
-        temp = np.zeros((new_ind, new_ind))
-        old_n = cross_sim.shape[0]
-        temp[:old_n, :old_n] = cross_sim
-        cross_sim = temp
-        for i in range(old_n, new_ind): # new-old intersections
-            c1 = new2old[i][0]
-            c2 = new2old[i][1]
-            cross_sim[i,:old_n] = (nc[c1]*cross_sim[c1,:old_n] + nc[c2]*cross_sim[c2,:old_n])/(nc[c1]+nc[c2])
-            cross_sim[:old_n, i] = (nc[c1]*cross_sim[:old_n,c1] + nc[c2]*cross_sim[:old_n,c2])/(nc[c1]+nc[c2])
-            
-        for i in range(old_n, new_ind): # new-new intersections
-            c1 = new2old[i][0]
-            c2 = new2old[i][1]
-            for j in range(old_n+1, new_ind):
-                c3 = new2old[j][0]
-                c4 = new2old[j][1]
-                cross_sim[i,j] = nc[c1]*nc[c3]*cross_sim[c1,c3] + nc[c1]*nc[c4]*cross_sim[c1,c4] + \
-                nc[c2]*nc[c3]*cross_sim[c2,c3] + nc[c2]*nc[c4]*cross_sim[c2,c4]
-                cross_sim[i,j] /= ((nc[c1]+nc[c2])*(nc[c3]+nc[c4]))
+                    if final_metric[i1,i2] < params["final_thresh"]:
+                        merge = False
+
+            # do merge
+            if merge:
+                for i in range(len(cl_list)):
+                    old2new[cl_list[i]] = new_ind
+                new2old[new_ind] = cl_list
+                new_ind += 1
                 
-       # update xcorr_sig with weighted avges
-        temp = np.zeros((new_ind, new_ind))
-        old_n = xcorr_sig.shape[0]
-        temp[:old_n, :old_n] = xcorr_sig
-        xcorr_sig = temp
-        for i in range(old_n, new_ind): # new-old intersections
-            c1 = new2old[i][0]
-            c2 = new2old[i][1]
-            xcorr_sig[i,:old_n] = (nc[c1]*xcorr_sig[c1,:old_n] + nc[c2]*xcorr_sig[c2,:old_n])/(nc[c1]+nc[c2])
-            xcorr_sig[:old_n, i] = (nc[c1]*xcorr_sig[:old_n,c1] + nc[c2]*xcorr_sig[:old_n,c2])/(nc[c1]+nc[c2])
-            
-        for i in range(old_n, new_ind): # new-new intersections
-            c1 = new2old[i][0]
-            c2 = new2old[i][1]
-            for j in range(old_n+1, new_ind):
-                c3 = new2old[j][0]
-                c4 = new2old[j][1]
-                xcorr_sig[i,j] = nc[c1]*nc[c3]*xcorr_sig[c1,c3] + nc[c1]*nc[c4]*xcorr_sig[c1,c4] + \
-                nc[c2]*nc[c3]*xcorr_sig[c2,c3] + nc[c2]*nc[c4]*xcorr_sig[c2,c4]
-                xcorr_sig[i,j] /= ((nc[c1]+nc[c2])*(nc[c3]+nc[c4]))
-                
-        # update clusters, counts
-        for i in range(clusters.shape[0]):
-            if clusters[i] in old2new:
-                clusters[i] = old2new[clusters[i]]
-        
-        counts = bd.spikes_per_cluster(clusters)
-        n_clust = clusters.max() + 1
-        # convert counts to array
-        temp = np.zeros(n_clust)
-        for i in range(n_clust):
-            if i in counts:
-                temp[i] = counts[i]
-        counts = temp
-        
-        # recalculate ref_pen
-        rp, rr = recalc_ref_p(pairs, times, clusters, counts, params)
-        temp = np.zeros((new_ind, new_ind))
-        old_n = ref_pen.shape[0]
-        temp[:old_n, :old_n] = ref_pen
-        ref_pen = temp
-        
-        for i in range(len(pairs)):
-            ref_pen[pairs[i][0], pairs[i][1]] = rp[i]
-        
-    # build lists to return
-    stage_mets = [cross_sim, xcorr_sig, ref_pen]
-    merge_lists = [old2new, new2old, rejected]
+    # remove intermediate clusters
+    for key in list(set(new2old.keys())):
+        if key not in list(set(old2new.values())):
+            del new2old[key]
     
-    return clusters, counts, merge_lists, stage_mets
+    return old2new, new2old
 
 
 # Multithreading function definitions

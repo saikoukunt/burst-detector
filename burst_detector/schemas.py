@@ -41,8 +41,6 @@ class AutoMergeParams(ArgSchema):
     
 class OutputParams(DefaultSchema):
     mean_time = String()
-    cache_spikes_time = String()
-    cross_sim_time = String()
     xcorr_sig_time = String()
     ref_pen_time = String()
     merge_time = String()
