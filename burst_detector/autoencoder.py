@@ -10,52 +10,116 @@ import random
 import os
 import burst_detector as bd
 import pandas as pd
-from torch.utils.data import Dataset, DataLoader, Subset
+from torch.utils.data import Dataset, DataLoader, Subset, WeightedRandomSampler
 from torchvision.transforms import ToTensor
 from sklearn.model_selection import train_test_split
 
+def generate_train_data(data, ci, channel_pos, gti, params):
+    """
+    Generates an autoencoder training dataset from a given recording.
 
-def generate_train_data(data, times_multi, clusters, counts, labels, mean_wf, channel_pos, folder):
+    Args:
+        data (2d array): ephys data with shape (# of timepoints, # of channels).
+            Should be passed in as an np.memmap for large datasets.
+        ci (dict): contains per-cluster info --
+            times (1d array):       contains all spike times.
+            times_multi (list):     contains 1D arrays of spike times indexed by cluster id.
+            clusters (1d array):    cluster id per cluster.
+            counts (dict):          spike counts per cluster.
+            labels (DataFrame):     good/mua/noise status per cluster.
+            mean_wf (3d array):     mean waveforms, shape=(# of waveforms, # channels, # timepoints).
+        channel_pos (2d array): contains xy coords of each channel.
+        gti (dict): contains training data parameters --
+            spk_fld (str):       path to folder where spike waveforms will be saved.   
+            pre_samples (int):      number of samples to include before spike time. 
+            post_samples (int):     number of samples to after before spike time.   
+            num_chan (int):         number of channels to include in spike waveform.
+            noise (bool):           True if noise snippets should be included in dataset.
+            for_shft (bool):        True if dataset will be used to train a shift-invariant autoencoder.
+        params (dict): JSON parameters
+    Yields:
+        - spike and/or noise snippets saved to spk_fld.
+        - labels.csv containing file names and cluster id per snippet.
+    """
+    
+    os.makedirs(gti['spk_fld'], exist_ok=True)
+    
+    # create dict of nearest channels per cluster
     chans = {}
-
-    for i in range(mean_wf.shape[0]):
-        if i in counts:
-            chs, peak = bd.utils.find_best_channels(mean_wf[i], channel_pos)
+    for i in range(ci['mean_wf'].shape[0]):
+        if i in ci['counts']:
+            chs, peak = bd.utils.find_best_channels(ci['mean_wf'][i], channel_pos, gti['num_chan'])
             dists =  bd.utils.get_dists(channel_pos, peak, chs)
             chans[i] = chs[np.argsort(dists)].tolist()
-            
+     
+    # init extraction variables
     file_names = []
     cl_ids = []
-
-    pre_samples = 10
-    post_samples = 30
-
-    max_spikes = 2000
-    min_spikes = 100
+    if gti['for_shft']:
+        gti['pre_samples'] += 5
+        gti['post_samples'] += 5
     
+    # spike extraction loop
     tot = 0
-    for i in range(clusters.max()+1):
-        if (i in counts) and (counts[i] > min_spikes) and (labels.loc[labels['cluster_id']==i, 'group'].item() == 'good'):
-            cl_times = times_multi[i].astype("int32")
+    for i in range(ci['clusters'].max()+1):
+        if (i in ci['counts']) and (ci['counts'][i] > params["min_spikes"]) and (ci['labels'].loc[ci['labels']['cluster_id']==i, 'group'].item() == 'good'):
+            cl_times = ci['times_multi'][i].astype("int32")
 
             # cap number of spikes
-            if (max_spikes < cl_times.shape[0]):
+            if (params['max_spikes'] < cl_times.shape[0]):
                 np.random.shuffle(cl_times)
-                cl_times = cl_times[:max_spikes]
+                cl_times = cl_times[:params["max_spikes"]]
 
-            # save spikes to file and add to annotations
+            # save spikes to file 
             for j in range(cl_times.shape[0]):
                 file_names.append("cl%d_spk%d.npy" % (i, j))
                 cl_ids.append(i)
+                
+                start = cl_times[j]-gti['pre_samples']
+                end = cl_times[j]+gti['post_samples']
+                if (start > 0) and (end < data.shape[0]):
+                    spike = data[start:end, chans[i]].T
+                    spike = np.nan_to_num(spike)
+                    out_name = gti['spk_fld'] +"/cl%d_spk%d.npy" % (i, j)
+                    np.save(out_name, spike)
+    
+    # noise snippet extraction
+    if gti['noise']:
+        # dict of nearest channels per channel
+        chans_2 = {}
+        for i in range(channel_pos.shape[0]):
+            chs = bd.utils.get_closest_channels(channel_pos, i, gti['num_chan'])
+            dists = bd.utils.get_dists(channel_pos, i, chs)
+            chans_2[i] = chs[np.argsort(dists)].tolist()
 
-                spike = data[cl_times[j]-pre_samples:cl_times[j]+post_samples, chans[i]].T
-                spike = np.nan_to_num(spike)
-                out_name = "./data/" + folder +"/cl%d_spk%d.npy" % (i, j)
+        # extraction loop
+        ind = 0
+        for i in range(1,ci['times'].shape[0]):
+            # portions where no spikes occur
+            if ((ci['times'][i]-gti['pre_samples']) - (ci['times'][i-1]+gti['post_samples'])) > gti['pre_samples'] + gti['post_samples']:
 
-                np.save(out_name, spike)
+                # randomly select 10 times and channels in range
+                noise_times = np.random.choice(range(int(ci['times'][i-1]+gti['post_samples']), int(ci['times'][i]-gti['pre_samples'])), 10, replace=False)
+                noise_chs = np.random.choice(range(channel_pos.shape[0]), 10, replace=False)
+                
+                # save each spike to file
+                for j in range(10):
+                    file_names.append("cl%d_spk%d.npy" % (-1, ind))
+                    cl_ids.append(-1)
                     
-        df = pd.DataFrame({'file':file_names, 'cl':cl_ids}, index=None)
-        df.to_csv("./data/" + folder + "/labels.csv", header=False, index=False)
+                    start = noise_times[j]-gti['pre_samples']
+                    end = noise_times[j]+gti['post_samples']
+                    noise = data[start:end, chans_2[noise_chs[j]]].T
+                    noise = np.nan_to_num(noise)
+                    out_name = gti['spk_fld'] + "/cl%d_spk%d.npy" % (-1, ind)
+                    
+                    np.save(out_name, noise)
+                    ind += 1
+                    
+    # construct and save spike labels dataframe
+    df = pd.DataFrame({'file':file_names, 'cl':cl_ids}, index=None)
+    df.to_csv(gti['spk_fld'] + "/labels.csv", header=False, index=False)
+
         
 class SpikeDataset(Dataset):
     def __init__(self, annotations_file, spk_dir, transform=None, target_transform=None):
@@ -77,84 +141,63 @@ class SpikeDataset(Dataset):
             label = self.target_transform(label)
         return spk, label
     
-"""
-A Convolutional Autoencoder
-"""
+    
 class CN_AE(nn.Module):
-    def __init__(self, imgChannels=1, featureDim=256*1*5, zDim=15):
+    def __init__(self, imgChannels=1, n_filt=256, zDim=15, num_chan=8, num_samp=40):
         super(CN_AE, self).__init__()
-
-        # Initializing the 2 convolutional layers and 2 full-connected layers for the encoder
-        self.encUpSamp1 = nn.Upsample((16,80))
-        self.encUpConv1 = nn.ConvTranspose2d(imgChannels, 16, (3,3), padding=(1,1))
+        self.num_chan = num_chan
+        self.num_samp = num_samp
+        self.n_filt = n_filt
+        self.half_filt = int(n_filt/2)
+        self.qrt_filt = int(n_filt/4)
+        self.featureDim = int(n_filt*self.num_chan/8*self.num_samp/8)
         
-        self.encDownConv1 = nn.Conv2d(16, 32, (3,3), padding='same')
-        self.encDownPool1 = nn.MaxPool2d((2,2))
-        
-        self.encConv1 = nn.Conv2d(32, 64, (3,3), padding='same')
-        self.encBN1 = nn.BatchNorm2d(64)
+        self.encConv1 = nn.Conv2d(imgChannels, self.qrt_filt, (3,3), padding='same')
+        self.encBN1 = nn.BatchNorm2d(self.qrt_filt)
         self.encPool1 = nn.MaxPool2d((2,2), return_indices=True)
         
-        self.encConv2 = nn.Conv2d(64, 128, (3,3), padding='same')
-        self.encBN2 = nn.BatchNorm2d(128)
+        self.encConv2 = nn.Conv2d(self.qrt_filt, self.half_filt, (3,3), padding='same')
+        self.encBN2 = nn.BatchNorm2d(self.half_filt)
         self.encPool2 = nn.MaxPool2d((2,2), return_indices=True)
         
-        self.encConv3 = nn.Conv2d(128, 256, (3,3), padding='same')
-        self.encBN3 = nn.BatchNorm2d(256)
+        self.encConv3 = nn.Conv2d(self.half_filt, n_filt, (3,3), padding='same')
+        self.encBN3 = nn.BatchNorm2d(n_filt)
         self.encPool3 = nn.MaxPool2d((2,2), return_indices=True)
         
-        self.encFC1 = nn.Linear(featureDim, zDim)
-
-        # Initializing the fully-connected layer and 2 convolutional layers for decoder
-        self.decFC1 = nn.Linear(zDim, featureDim)
-        self.decBN1 = nn.BatchNorm2d(256)
+        self.encFC1 = nn.Linear(self.featureDim, zDim)
+        self.decFC1 = nn.Linear(zDim, self.featureDim)
+        self.decBN1 = nn.BatchNorm2d(n_filt)
         
-        self.decUpSamp1 = nn.Upsample((2,10))
-        self.decConv1 = nn.ConvTranspose2d(256, 128, (3,3), padding=(1,1))
-        self.decBN2 = nn.BatchNorm2d(128)
+        self.decUpSamp1 = nn.Upsample((int(num_chan/4), int(num_samp/4)))
+        self.decConv1 = nn.ConvTranspose2d(n_filt, self.half_filt, (3,3), padding=(1,1))
+        self.decBN2 = nn.BatchNorm2d(self.half_filt)
         
-        self.decUpSamp2 = nn.Upsample((4,20))
-        self.decConv2 = nn.ConvTranspose2d(128, 64, (3,3), padding=(1,1))
-        self.decBN3 = nn.BatchNorm2d(64)
+        self.decUpSamp2 = nn.Upsample((int(num_chan/2), int(num_samp/2)))
+        self.decConv2 = nn.ConvTranspose2d(self.half_filt, self.qrt_filt, (3,3), padding=(1,1))
+        self.decBN3 = nn.BatchNorm2d(self.qrt_filt)
         
-        self.decUpSamp3 = nn.Upsample((8,40))
-        self.decConv3 = nn.ConvTranspose2d(64, 32, (3,3), padding=(1,1))
-        
-        self.decUpSamp4 = nn.Upsample((16, 80))
-        self.decUpConv1 = nn.ConvTranspose2d(32, 16, (3,3), padding=(1,1))
-        
-        self.decDownConv1 = nn.Conv2d(16, imgChannels, (3,3), padding='same')
-        self.decPool1 = nn.MaxPool2d((2,2))
+        self.decUpSamp3 = nn.Upsample((num_chan, num_samp))
+        self.decConv3 = nn.ConvTranspose2d(self.qrt_filt, imgChannels, (3,3), padding=(1,1))
 
     def encoder(self, x):
-        # Input is fed into 2 convolutional layers sequentially
-        x = self.encUpSamp1(x)
-        x = F.relu(self.encUpConv1(x))
-        
-        x = F.relu(self.encDownConv1(x))
-        x = self.encDownPool1(x)
-        
         x = F.relu(self.encBN1(self.encConv1(x)))
         x, self.encInd1 = self.encPool1(x)
         
         x = F.relu(self.encBN2(self.encConv2(x)))
         x, self.encInd2 = self.encPool2(x)
         
-        x = F.relu6(self.encBN3(self.encConv3(x)))
+        x = F.relu(self.encBN3(self.encConv3(x)))
         x, self.encInd3 = self.encPool3(x)
         
-        x = x.view(-1, 256*1*5)
+        x = x.view(-1, self.featureDim)
         
         x = self.encFC1(x)
         
         return x
 
     def decoder(self, z):
-
-        # z is fed back into a fully-connected layers and then into two transpose convolutional layers
-        # The generated output is the same size of the original input
         x = self.decFC1(z)
-        x = x.view(-1, 256, 1, 5)
+        x = x.view(-1, self.n_filt, int(self.num_chan/8), int(self.num_samp/8))
         x = F.relu(self.decBN1(x))
         
         x = self.decUpSamp1(x)
@@ -164,32 +207,43 @@ class CN_AE(nn.Module):
         x = F.relu(self.decBN3(self.decConv2(x)))
         
         x = self.decUpSamp3(x)
-        x = F.relu(self.decConv3(x))
-
-        x = self.decUpSamp4(x)
-        x = F.relu(self.decUpConv1(x))
-        
-        x = self.decDownConv1(x)
-        x = self.decPool1(x)
+        x = self.decConv3(x)
         
         return x
 
     def forward(self, x):
-
-        # The entire pipeline of the AE: encoder -> decoder
         z = self.encoder(x)
         out = self.decoder(z)
         
         return out
-        
-def train_ae(folder, num_epochs, zDim=15):
-    spk_data = SpikeDataset("./data/"+ folder +"/labels.csv","./data/"+ folder +"/", ToTensor())
     
-    BATCH_SIZE = 128
+        
+def train_ae(spk_fld, counts, n_filt=256, num_epochs=10, zDim=15, lr=1e-3, pre_samples=10, post_samples=30, model=None, do_shft=False):
+    """
+    Trains an autoencoder on the given spike dataset.
 
+    Args:
+        spk_fld (str): path to folder containing dataset.
+        counts (dict): spike counts per cluster.
+    KWArgs:
+        num_epochs (int): number of training epochs.
+        zDim (int): latent dimensionality of CN_AE.
+        lr (float): optimizer learning rate.
+        pre_samples (int): number of samples included before spike time. 
+        post_samples (int): number of samples included after spike time. 
+        model (nn.Module): custom model, if using.
+        do_shft (bool): True if training samples should be randomly time-shifted.
+    Returns:
+        net (nn.Module): trained network.
+        spk_data (SpikeDataset): dataset that was used for training.
+    """
+                                    
+    # load dataset 
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')                               
+    spk_data = SpikeDataset(spk_fld +"/labels.csv", spk_fld +"/", ToTensor())
     labels = spk_data.spk_labels.iloc[:, 1]
 
-    # generate indices: instead of the actual data we pass in integers instead
+    # train-test split
     train_indices, test_indices, _, _ = train_test_split(
         range(len(spk_data)),
         labels,
@@ -197,76 +251,91 @@ def train_ae(folder, num_epochs, zDim=15):
         test_size=0.2,
         random_state=42
     )
-
-    # generate subset based on indices
     train_split = Subset(spk_data, train_indices)
     test_split = Subset(spk_data, test_indices)
 
-    # create batches
-    train_loader = DataLoader(train_split, batch_size=BATCH_SIZE, shuffle=True)
+    # sample weighting
+    sample_weights = [1/counts[int(label)] for label in labels[train_indices]]
+    sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(train_split), replacement=True)
+    BATCH_SIZE = 128
+    train_loader = DataLoader(train_split, batch_size=BATCH_SIZE, sampler=sampler)
     test_loader = DataLoader(test_split, batch_size=BATCH_SIZE)
     
-    """
-    Determine if any GPUs are available
-    """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    """
-    Initialize Hyperparameters
-    """
-    learning_rate = 1e-3
-    test_loss = np.zeros(num_epochs)
-
-    """
-    Initialize the network and the Adam optimizer
-    """
-    net = CN_AE(zDim=zDim).to(device)
-    optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
+    # init network, params                                 
+    net = model if model else CN_AE(zDim=zDim, n_filt=n_filt).to(device)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
+    test_loss = np.zeros(num_epochs)
     
-    """
-    Training the network for a given number of epochs
-    The loss after every epoch is printed
-    """
-    for epoch in range(num_epochs):
-        print('EPOCH %d' % (epoch))
+    # training loop
+    for epoch in range(num_epochs):     
+        print('EPOCH %d/%d' % (epoch+1, num_epochs))
         running_loss = 0
         last_loss = 0
+        net.train()
+
         for idx, data in enumerate(train_loader, 0):
-            print("\r" + str(idx), end="")
-            imgs, _ = data
-            imgs = imgs.to(device)
+            print("\rTraining batch " + str(idx+1) +'/' + str(len(train_loader)), end="")
+             
+            # pre-train modifications                     
+            spks, cl = data
+            if do_shft:
+                targ = spks[:,:,:,5:-5].clone().to(device)
 
-            # Feeding a batch of images into the network to obtain the output image, mu, and logVar
-            out = net(imgs)
-            loss = loss_fn(out, imgs)
+                # randomly time-shift 30% of spikes
+                shft_ind = np.random.choice(np.arange(spks.shape[0]), int(spks.shape[0]*.3), replace=False)
+                shft_spks = spks[:,:,:,5:-5].clone().to(device)
+                for ind in shft_ind:
+                    shift = np.random.choice([-5,-4,-3,-2,-1,1,2,3,4,5], 1)[0]
+                    shft_spks[ind,:,:,:] = spks[ind,:,:,5+shift:pre_samples+post_samples+5+shift].clone().to(device)
+                spks = shft_spks
+            else:
+                targ = spks.to(device)
+                spks = spks.to(device)
+            targ[cl==-1,:,:,:] = 0  # noise snippets should be reconstructed as 0
 
-
-            # Backpropagation based on the loss
+            # backprop
+            out = net(spks)
+            loss = loss_fn(out, targ)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # lr_sched.step()
 
-            # Gather data and report
+            # report train loss
             running_loss += loss
             if idx % 500 == 499:
                 last_loss = running_loss/500
                 print(" Batch %d | loss: %.4f" % (idx, last_loss))
                 running_loss = 0
-
         print()
-        # test error
+        last_loss = running_loss/(len(train_loader) % 500)
+                                    
+        # calculate test loss
         running_tloss = 0
         net.eval()
         with torch.no_grad():
             for i, data in enumerate(test_loader):
-                print("\r" + str(i), end="")
-                imgs, _ = data
-                imgs = imgs.to(device)
+                print("\rTesting batch " + str(i+1) + "/" + str(len(test_loader)), end="")
 
-                out = net(imgs)
-                tloss = loss_fn(out, imgs)
+                # pre-test modifications
+                spks, cl = data
+                if do_shft:
+                    targ = spks[:,:,:,5:-5].clone().to(device)
+
+                    # randomly time-shift 30% of spikes
+                    shft_ind = np.random.choice(np.arange(spks.shape[0]), int(spks.shape[0]*.3), replace=False)
+                    shft_spks = spks[:,:,:,5:-5].clone().to(device)
+                    for ind in shft_ind:
+                        shift = np.random.choice([-5,-4,-3,-2,-1,1,2,3,4,5], 1)[0]
+                        shft_spks[ind,:,:,:] = spks[ind,:,:,5+shift:pre_samples+post_samples+5+shift].clone().to(device)
+                    spks = shft_spks
+                else:
+                    targ = spks.to(device)
+                    spks = spks.to(device)
+                targ[cl==-1,:,:,:] = 0  # noise snippets should be reconstructed as 0
+
+                out = net(spks)
+                tloss = loss_fn(out, targ)
                 running_tloss += tloss
 
         avg_vloss = running_tloss/(i+1)

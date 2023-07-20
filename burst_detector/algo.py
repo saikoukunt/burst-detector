@@ -5,8 +5,13 @@ import math
 import os
 import json
 import time
+import torch
+from torchvision.transforms import ToTensor
 
 def run_merge(params):
+    os.makedirs(os.path.join(params['KS_folder'], "automerge"), exist_ok=True)
+    os.makedirs(os.path.join(params['KS_folder'], "automerge", "spikes"), exist_ok=True)
+    os.makedirs(os.path.join(params['KS_folder'], "automerge", "merges"), exist_ok=True)
     
     # load spike time and cluster estimates
     print("Loading files...")
@@ -15,93 +20,123 @@ def run_merge(params):
     clusters = np.load(os.path.join(params['KS_folder'], 'spike_clusters.npy')).flatten() 
     n_clust = clusters.max() + 1
     
-    # load mean_wf if it exists
-    if not params['calc_means']:
-        try:
-            mean_wf = np.load(os.path.join(params['KS_folder'], 'mean_waveforms.npy'))
-        except OSError:
-            print("mean_waveforms.npy doesn't exist, calculating mean waveforms on the fly...")
-            params['calc_means'] = True
-            mean_wf = None
-    else:
-        mean_wf = None
-            
-    # count spikes per cluster, load quality labels
+     # count spikes per cluster, load quality labels
     counts = bd.spikes_per_cluster(clusters)
-    labels = pd.read_csv(os.path.join(params['KS_folder'], 'cluster_group.tsv'), sep="\t")
-        
+    cl_labels = pd.read_csv(os.path.join(params['KS_folder'], 'cluster_group.tsv'), sep="\t")
+    times_multi = bd.find_times_multi(times, clusters, np.arange(clusters.max()+1))
+    channel_pos = np.load(os.path.join(params['KS_folder'], "channel_positions.npy"))
+    
     # load recording
-    rawData = np.memmap(params['data_filepath'], dtype='int16', mode='r')
+    rawData = np.memmap(params['data_filepath'], dtype=params['dtype'], mode='r')
     data = np.reshape(rawData, (int(rawData.size/params['n_chan']), params['n_chan']))
+    
+    # filter out low-spike/noise units
+    cl_good = np.zeros(n_clust, dtype=bool)
+    unique = np.unique(clusters)
+    for i in range(n_clust):
+         if (i in unique) and (counts[i] > params['min_spikes']) \
+            and (cl_labels.loc[cl_labels['cluster_id']==i, 'group'].item() == 'good'):
+                cl_good[i] = True
+    
+    
+    # load mean_wf if it exists
+    try:
+        mean_wf = np.load(os.path.join(params['KS_folder'], 'mean_waveforms.npy'))
+        std_wf = np.load(os.path.join(params['KS_folder'], 'std_waveforms.npy'))
+        spikes = None
+    except OSError:
+        print("mean_waveforms.npy doesn't exist, calculating mean waveforms on the fly...")
+        mean_wf = np.zeros(
+            (n_clust, 
+             params['n_chan'],
+             params['pre_samples'] + params['post_samples'])
+        ) 
+        for i in range(n_clust):
+            if cl_good[i]:
+                spikes = bd.extract_spikes(
+                    data, times_multi, clusters, i,
+                    n_chan=params['n_chan'],
+                    pre_samples=params['pre_samples'],
+                    post_samples=params['post_samples'],
+                    max_spikes=params['max_spikes']
+                )
+                mean_wf[i,:,:] = np.nanmean(spikes, axis=0)
+        np.save(os.path.join(params['KS_folder'], 'mean_waveforms.npy'), mean_wf)
+        np.save(os.path.join(params['KS_folder'], 'mean_waveforms.npy'), std_wf)
+    peak_chans = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf,2),1)
+    
 
     t0 = time.time()
-    print("Loaded data, calculating mean similarity...")
+    print("Done, calculating cluster similarity...")
     
-    # group spike times by cluster identity
-    times_multi = bd.find_times_multi(times, clusters, np.arange(clusters.max()+1))
-    
-    # calculate mean similarity
-    mean_sim, offset, wf_norms, mean_wf, pass_ms = bd.stages.calc_mean_sim(
-        data, 
-        times_multi, 
-        clusters, 
-        counts, 
-        n_clust,
-        labels,
-        mean_wf,
-        params
-    )
+    # calculate similarity
+    if params['sim_type'] == 'ae':
+        # calculate nearest channels for each cluster
+        chans = {}
+        for i in range(mean_wf.shape[0]):
+            if i in counts:
+                chs, peak = bd.utils.find_best_channels(mean_wf[i], channel_pos, params['ae_chan'])
+                dists = bd.utils.get_dists(channel_pos, peak, chs)
+                chans[i] = chs[np.argsort(dists)].tolist()
+                
+        # extract spikes for ae if necessary
+        if params['spikes_path'] == None:
+            print("Extracting spike snippets to train autoencoder...")
+            spk_fld = os.path.join(params['KS_folder'], "automerge", "spikes")
+            ci = {'times': times,
+                'times_multi': times_multi,
+                'clusters': clusters,
+                'counts': counts,
+                'labels': cl_labels,
+                'mean_wf': mean_wf
+            }
+            gti = {
+                'spk_fld': spk_fld,
+                'pre_samples': params['ae_pre'],
+                'post_samples': params['ae_post'],
+                'num_chan': params['ae_chan'],
+                'noise': params['ae_noise'],
+                'for_shft': params['ae_shft']
+            }
+            bd.generate_train_data(data, ci, channel_pos, gti, params)
+            print("Spike snippets saved in " + str(spk_fld))
+        else:
+            spk_fld = params['spikes_path']
+
+        # train model if necessary
+        if params['model_path'] == None:
+            print("Training autoencoder...")
+            net, spk_data = bd.train_ae(spk_fld, counts, do_shft=params['ae_shft'], num_epochs=params['ae_epochs'])
+            torch.save(net.state_dict(), os.path.join(params['KS_folder'], "automerge", "ae.pt"))
+            print("Autoencoder saved in " + str(os.path.join(params['KS_folder'], "automerge", "ae.pt")))
+        else:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            net = bd.autoencoder.CN_AE().to(device)                         
+            net.load_state_dict(torch.load(params['model_path']))
+            net.eval()
+            spk_data = bd.autoencoder.SpikeDataset(os.path.join(spk_fld, 'labels.csv'), spk_fld, ToTensor())
+        
+        # calculate ae_similarity
+        sim, spk_lat_peak, lat_mean, spk_lab = bd.stages.calc_ae_sim(mean_wf, net, peak_chans, spk_data, chans, cl_good, do_shft=params['ae_shft'])
+    elif params['sim_type'] == 'mean':
+        # calculate mean similarity
+        sim, offset, wf_norms, mean_wf, pass_ms = bd.stages.calc_mean_sim(
+            data, 
+            times_multi, 
+            clusters, 
+            counts, 
+            n_clust,
+            labels,
+            mean_wf,
+            params
+        )
+        sim[pass_ms == False] = 0
+    pass_ms = sim > params["sim_thresh"]
+    print("Found %d candidate cluster pairs" % (pass_ms.sum()/2))
     t1 = time.time()
     mean_sim_time = time.strftime('%H:%M:%S', time.gmtime(t1-t0))
-    print("Found %d candidate cluster pairs" % (pass_ms.sum()/2))
     
-    mean_sim[pass_ms == False] = 0
     
-#     if not params['skip_cross_sim']:
-#         print("Pre-fetching spikes for cross-projection...")
-#         # pre-fetch spikes and free data RAM
-#         spikes = {}
-#         num = 0
-#         for c1 in range(n_clust):
-#             for c2 in range(c1+1, n_clust):
-#                 if pass_ms[c1,c2]:
-#                     num += 1
-
-#                     if c1 not in spikes:
-#                         spikes[c1] = bd.extract_spikes(
-#                             data, 
-#                             times_multi, 
-#                             clusters, 
-#                             c1, 
-#                             pre_samples=params['pre_samples'],
-#                             post_samples=params['post_samples'],
-#                             n_chan=params['n_chan'],
-#                             max_spikes=params['max_spikes']
-#                         )
-#                     if c2 not in spikes:
-#                         spikes[c2] = bd.extract_spikes(
-#                             data, 
-#                             times_multi, 
-#                             clusters, 
-#                             c2, 
-#                             pre_samples=params['pre_samples'],
-#                             post_samples=params['post_samples'],
-#                             n_chan=params['n_chan'],
-#                             max_spikes=params['max_spikes']
-#                         )
-#         data = None
-
-#         t2 = time.time()
-#         cache_spikes_time = time.strftime('%H:%M:%S', time.gmtime(t2-t1))
-#         print("Caching spikes took %s" % cache_spikes_time)
-#         print("Calculating cross-projection similarity...")
-        
-#         # calculate cross-projection similarity and free spikes RAM
-#         cross_sim = bd.stages.calc_cross_sim(spikes, offset, mean_wf, wf_norms, pass_ms, n_clust)
-#         spikes = None
-#         t3 = time.time()
-#         cross_sim_time = time.strftime('%H:%M:%S', time.gmtime(t3-t2))
-#         print("Cross projection took %s" % cross_sim_time)
     
     # calculate xcorr metric
     print("Calculating cross-correlation metric...")
@@ -116,6 +151,9 @@ def run_merge(params):
     xcorr_time = time.strftime('%H:%M:%S', time.gmtime(t4-t1))
     print("Cross correlation took %s" % xcorr_time)
     
+    
+    
+    
     # calculate refractory penalty
     print("Calculating refractory period penalty...")
     ref_pen, ref_per = bd.stages.calc_ref_p(times, clusters, n_clust, pass_ms, xcorr_sig,\
@@ -124,20 +162,20 @@ def run_merge(params):
     ref_pen_time = time.strftime('%H:%M:%S', time.gmtime(t5-t4))
     print("Refractory period penalty took %s" % ref_pen_time)
 
+    
+    
     # calculate final metric
     print("Calculating final metric...")
-    final_metric = np.zeros_like(mean_sim)
+    final_metric = np.zeros_like(sim)
     
     for c1 in range(n_clust):
         for c2 in range(c1, n_clust):
-            met = mean_sim[c1,c2] + \
+            met = sim[c1,c2] + \
             params['xcorr_coeff']*xcorr_sig[c1,c2] - \
             params['ref_pen_coeff']*ref_pen[c1,c2]
             
             final_metric[c1,c2] = max(met, 0)
             final_metric[c2,c1] = max(met, 0)
-            
-            
     print("Merging...")
     
     channel_map = np.load(os.path.join(params['KS_folder'], 'channel_map.npy')).flatten()
@@ -189,13 +227,25 @@ def run_merge(params):
 #         "Y": Y}
     # )
 
-    os.makedirs(os.path.join(params['KS_folder'], "automerge"), exist_ok=True)
     # spike_table.to_csv(os.path.join(params['KS_folder'], "automerge", "spike_table.csv"), header=False, index=False)
     # np.save(os.path.join(params['KS_folder'], "automerge", "clusters.npy"), clusters)
     # np.save(os.path.join(params['KS_folder'], "automerge", "cross_sim.npy"), stage_mets[0])
     # np.save(os.path.join(params['KS_folder'], "automerge", "xcorr_sig.npy"), stage_mets[1])
     # np.save(os.path.join(params['KS_folder'], "automerge", "ref_pen.npy"), stage_mets[2])
-
+    if spikes == None:
+        spikes = {}
+        print("Caching spikes")
+        for i in range(n_clust):
+            if cl_good[i]:
+                print("\r" + str(i) + "/" + str(clusters.max()), end="")
+                spikes[i] = bd.extract_spikes(
+                    data, times_multi, clusters, i,
+                    n_chan=params['n_chan'],
+                    pre_samples=params['pre_samples'],
+                    post_samples=params['post_samples'],
+                    max_spikes=params['max_spikes']
+                )
+            
     with open(os.path.join(params['KS_folder'], "automerge", "old2new.json"), "w") as file:
         file.write(json.dumps(old2new))
 
@@ -203,12 +253,11 @@ def run_merge(params):
         file.write(json.dumps(new2old))
         
     merges = list(new2old.values())
-    bd.plot.plot_merges(merges, times_multi, mean_wf, params)
+    bd.plot.plot_merges(merges, times_multi, mean_wf, std_wf, spikes, params)
     
     t7 = time.time()
     total_time = time.strftime('%H:%M:%S', time.gmtime(t7-t0))
     
     print("Total time: %s" % total_time)
-    
     
     return mean_sim_time, xcorr_time, ref_pen_time, merge_time, total_time, len(list(new2old.keys())), int(clusters.max())

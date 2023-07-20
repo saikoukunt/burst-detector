@@ -28,9 +28,9 @@ def calc_wf_norms(wfs):
     return wf_norms
 
 
-def wf_means_similarity(mean_wf, jitter=False, jitter_amt=4):
+def wf_means_similarity(mean_wf, cl_good, jitter=False, jitter_amt=4):
     """
-    Calculates the normalized pairwise similarity (inner product) between every pair of 
+    Calculates the normalized pairwise similarity (inner product) between pairs of 
     waveforms in an array of waveforms.
     
     Parameters
@@ -39,6 +39,9 @@ def wf_means_similarity(mean_wf, jitter=False, jitter_amt=4):
         Array containing waveforms. The first dimension of the array must index the 
         waveforms [i.e. shape = (# of waveforms, # channels, # timepoints) OR 
         (# of waveforms, # timepoints, # channels)]
+    cl_good: array-like
+        Array containing cluster quality status. Only good clusters will be considered
+        in similarity calculations.
     jitter: boolean, optional
         True if similarity calculations should check for time shifts between waveforms.
         Default is False.
@@ -57,23 +60,6 @@ def wf_means_similarity(mean_wf, jitter=False, jitter_amt=4):
         Array containing normalized input waveforms, where each waveform is normalized with
         respect to its Frobenius norm.
     """
-#     n_clust = mean_wf.shape[0]
-#     mean_sim = np.zeros((n_clust, n_clust))
-#     offsets = np.zeros((n_clust, n_clust), dtype='int16')
-#     mean_wf_norm = normalize_wfs(mean_wf)
-        
-#     for i in range(n_clust):
-#         for j in range(n_clust):
-#             if i != j:
-#                 if jitter:
-#                     sim, off = sim_jitter(mean_wf_norm[i], mean_wf_norm[j], jitter_amt)
-#                     mean_sim[i, j] = sim
-#                     offsets[i,j] = off
-#                 else:
-#                     mean_sim[i,j] = np.dot(mean_wf_norm[i].flatten(), mean_wf_norm[j].flatten())
-        
-#     return mean_sim, offsets, mean_wf_norm
-
     n_clust = mean_wf.shape[0]
     mean_sim = np.zeros((n_clust, n_clust))
     offsets = np.zeros((n_clust, n_clust), dtype='int16')
@@ -81,19 +67,21 @@ def wf_means_similarity(mean_wf, jitter=False, jitter_amt=4):
     
     for i in range(n_clust):
         for j in range(n_clust):
-            if i != j:
-                norm = max(wf_norms[i], wf_norms[j])
-                if norm == 0:
-                    continue
-                
-                if jitter:
-                    sim, off = sim_jitter(mean_wf[i], mean_wf[j], norm, jitter_amt)
-                    mean_sim[i, j] = sim/(norm**2)
-                    offsets[i,j] = off
-                else:
-                    mean_sim[i, j] = np.dot(mean_wf[i].flatten(), mean_wf[j].flatten())/(norm**2)
+            if cl_good[i] and cl_good[j]:
+                if i != j:
+                    norm = max(wf_norms[i], wf_norms[j])
+                    if norm == 0:
+                        continue
+
+                    if jitter:
+                        sim, off = sim_jitter(mean_wf[i], mean_wf[j], norm, jitter_amt)
+                        mean_sim[i, j] = sim/(norm**2)
+                        offsets[i,j] = off
+                    else:
+                        mean_sim[i, j] = np.dot(mean_wf[i].flatten(), mean_wf[j].flatten())/(norm**2)
                     
     return mean_sim, wf_norms, offsets
+
 
 def sim_jitter(m1, m2, norm, jitter_amt):
     """

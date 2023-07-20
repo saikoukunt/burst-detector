@@ -128,19 +128,25 @@ def extract_spikes(data, times_multi, sp_clust, clust_id, pre_samples=20, post_s
     """
     times = times_multi[clust_id].astype("int32")
     
+    # remove times that are too close to ends of recording
+    while (times[0] - pre_samples) < 0:
+        times = times[1:]
+    while (times[-1] + post_samples) >= data.shape[0]:
+        times = times[:-1]
+    
+    # cap number of spikes
     if (max_spikes != -1) and (max_spikes < times.shape[0]):
         np.random.shuffle(times)
         times = times[:max_spikes]
         
+    # extract spikes
     spikes = np.zeros((times.shape[0], n_chan, pre_samples+post_samples))
-    
     for i in range(times.shape[0]):
         spikes[i,:,:] = data[times[i]-pre_samples:times[i]+post_samples,:].T
         
     return spikes
     
     
-
 def fix_clust_ids(sp_clust, n_clusters):
     """
     Fixes cluster numbering so that cluster IDs are continuous.
@@ -211,7 +217,7 @@ def get_closest_channels(channel_positions, channel_index, n=None):
         out = out[:n]
     return out
 
-def find_best_channels(template, channel_pos):
+def find_best_channels(template, channel_pos, num_best):
     amplitude_threshold = 0
     
     amplitude = template.max(axis=1) - template.min(axis=1)
@@ -219,16 +225,15 @@ def find_best_channels(template, channel_pos):
     max_amp = amplitude[best_channel]
     
     peak_channels = np.nonzero(amplitude >= amplitude_threshold * max_amp)[0]
-    
-    close_channels = get_closest_channels(channel_pos, best_channel, 8)
+    close_channels = get_closest_channels(channel_pos, best_channel, num_best)
 
-    channel_shanks = (channel_pos[:,0]/250).astype("int")
-    shank = channel_shanks[best_channel]
-    channels_on_shank = np.nonzero(channel_shanks == shank)[0]
-    close_channels = np.intersect1d(close_channels, channels_on_shank)
-    channel_ids = np.intersect1d(close_channels, peak_channels)
+    # channel_shanks = (channel_pos[:,0]/250).astype("int")
+    # shank = channel_shanks[best_channel]
+    # channels_on_shank = np.nonzero(channel_shanks == shank)[0]
+    # close_channels = np.intersect1d(close_channels, channels_on_shank)
+    # channel_ids = np.intersect1d(close_channels, peak_channels)
     
-    return channel_ids, best_channel
+    return close_channels, best_channel
 
 def get_dists(channel_positions, ref_chan, target_chan):
     x = channel_positions[:, 0]

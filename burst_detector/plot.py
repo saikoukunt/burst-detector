@@ -6,13 +6,13 @@ import os
 from matplotlib.backends.backend_pdf import PdfPages
 
 ### PLOTTING CODE
-def plot_merges(merges, times_multi, mean_wf, params, nchan=20, start=10, stop=60, window_size=.102, bin_size=.001):
+def plot_merges(merges, times_multi, mean_wf, std_wf, spikes, params, nchan=20, start=10, stop=60, window_size=.102, bin_size=.001):
     for merge in merges:
         merge.sort()
-        wf_plot = plot_wfs(merge, mean_wf, nchan, start, stop)
+        wf_plot = plot_wfs(merge, mean_wf, std_wf, spikes, nchan, start, stop)
         corr_plot = plot_corr(merge, times_multi, window_size, bin_size);
         
-        name = os.path.join(params['KS_folder'], "automerge", "merge" + "".join(["_"+ str(cl) for cl in merge]) + ".pdf")
+        name = os.path.join(params['KS_folder'], "automerge", "merges", "merge" + "".join(["_"+ str(cl) for cl in merge]) + ".pdf")
         file = PdfPages(name)
         file.savefig(wf_plot, dpi = 300)
         file.savefig(corr_plot, dpi = 300)
@@ -21,46 +21,64 @@ def plot_merges(merges, times_multi, mean_wf, params, nchan=20, start=10, stop=6
         plt.close(wf_plot)
         plt.close(corr_plot)
 
-def plot_wfs(clust, mean_wf, nchan=20, start=10, stop=60):
+def plot_wfs(clust, mean_wf, std_wf, spikes, nchan=10, start=10, stop=60):
     peak_chans = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf,2),1)
     peak = int(np.mean(peak_chans[clust]))
     
-    fig, a = plt.subplots(math.ceil(nchan/4), 4, figsize=(10,6));
-    
-    ch_start = int(peak-nchan/2)
-    ch_stop = int(peak+nchan/2)
-
+    fig, axes = plt.subplots(math.ceil(nchan/2), 2*len(clust), figsize=(5*len(clust),6), constrained_layout=True);
+    ch_start = max(int(peak-nchan/2), 0)
+    ch_stop = min(int(peak+nchan/2), mean_wf.shape[1]-1)
     lines = []
+    
+    # calculate ymin and ymax
+    ymin = []
+    ymax = []
+    for cl in range(len(clust)):
+        ymin.append((mean_wf[clust[cl],:,start:stop]-2.5*std_wf[clust[cl],:,start:stop]).min()-10)
+        ymax.append((mean_wf[clust[cl],:,start:stop]+2.5*std_wf[clust[cl],:,start:stop]).max()-10)
+    ymin = min(ymin)
+    ymax = max(ymax)
+
     for i in range(ch_start, ch_stop):
-        a = plt.subplot(math.ceil(nchan/4), 4, i+1-(ch_start))
-        a.set_facecolor("black")
-        plt.ylabel(i)
+        ind = i - ch_start
+        or_ind = ind*len(clust) + 1
         
         for cl in range(len(clust)):
-            line, = plt.plot(mean_wf[clust[cl],i,start:stop], label=str(clust[cl]),color=colors[cl], alpha=0.7, linewidth=2)
+            p_ind = or_ind + cl
+            a = plt.subplot(math.ceil(nchan/2), 2*len(clust), p_ind)
+            a.set_facecolor("black")
+            # plt.ylabel(i)
+            
+            for j in range(min(200, spikes[clust[cl]].shape[0])):
+                line, = plt.plot(spikes[clust[cl]][j,i,start:stop], label=str(clust[cl]),color=colors[cl], linewidth=0.25)
             lines.append(line)
+            plt.ylim([ymin,ymax])
 
-        plt.ylim([mean_wf[clust].min()-10, mean_wf[clust].max()+10])
+            a.spines["top"].set_visible(False)
+            a.spines["right"].set_visible(False)
+            # a.spines["bottom"].set_visible(False)
+            # a.spines["left"].set_visible(False)
 
-        a.spines["top"].set_visible(False)
-        a.spines["right"].set_visible(False)
-        a.spines["bottom"].set_visible(False)
-        a.spines["left"].set_visible(False)
+            plt.tick_params(
+                axis='x',          # changes apply to the x-axis
+                which='both',      # both major and minor ticks are affected
+                bottom=False,      # ticks along the bottom edge are off
+                top=False,         # ticks along the top edge are off
+                labelbottom=False) # labels along the bottom edge are off
+            plt.tick_params(
+                axis='y',          # changes apply to the x-axis
+                which='both',      # both major and minor ticks are affected
+                left=False,      # ticks along the bottom edge are off
+                right=False,         # ticks along the top edge are off
+                labelleft=False
+               ) # labels along the bottom edge are off
+            
+    for ax, row in zip(axes[:,0], range(ch_start, ch_stop, 2)):
+        ax.set_ylabel(row, rotation=90, size='large')
+    for ax, row in zip(axes[:,len(clust)], range(ch_start+1, ch_stop, 2)):
+        ax.set_ylabel(row, rotation=90, size='large')
 
-        plt.tick_params(
-            axis='x',          # changes apply to the x-axis
-            which='both',      # both major and minor ticks are affected
-            bottom=False,      # ticks along the bottom edge are off
-            top=False,         # ticks along the top edge are off
-            labelbottom=False) # labels along the bottom edge are off
-
-        plt.tick_params(
-            axis='y',          # changes apply to the x-axis
-            which='both',      # both major and minor ticks are affected
-            left=False,      # ticks along the bottom edge are off
-            right=False,         # ticks along the top edge are off
-            labelleft=False
-           ) # labels along the bottom edge are off
+    # fig.tight_layout()
     fig.legend(lines, clust);
     
     return fig
