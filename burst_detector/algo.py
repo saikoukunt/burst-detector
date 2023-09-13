@@ -51,16 +51,19 @@ def run_merge(params):
              params['n_chan'],
              params['pre_samples'] + params['post_samples'])
         ) 
+        std_wf = np.zeros_like(mean_wf)
+        spikes = {}
         for i in range(n_clust):
             if cl_good[i]:
-                spikes = bd.extract_spikes(
+                spikes[i] = bd.extract_spikes(
                     data, times_multi, clusters, i,
                     n_chan=params['n_chan'],
                     pre_samples=params['pre_samples'],
                     post_samples=params['post_samples'],
                     max_spikes=params['max_spikes']
                 )
-                mean_wf[i,:,:] = np.nanmean(spikes, axis=0)
+                mean_wf[i,:,:] = np.nanmean(spikes[i], axis=0)
+                std_wf[i,:,:] = np.nanstd(spikes[i], axis=0)
         np.save(os.path.join(params['KS_folder'], 'mean_waveforms.npy'), mean_wf)
         np.save(os.path.join(params['KS_folder'], 'mean_waveforms.npy'), std_wf)
     peak_chans = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf,2),1)
@@ -126,7 +129,7 @@ def run_merge(params):
             clusters, 
             counts, 
             n_clust,
-            labels,
+            cl_labels,
             mean_wf,
             params
         )

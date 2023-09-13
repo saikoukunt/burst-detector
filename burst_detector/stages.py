@@ -68,7 +68,7 @@ def calc_mean_sim(data, times, clusters, counts, n_clust, labels, mean_wf, param
     return mean_sim, offset, wf_norms, mean_wf, pass_ms
 
 
-def calc_ae_sim(mean_wf, model, peak_chans, spk_data, chans, cl_good, do_shft=False, zDim=15, sf=1):
+def calc_ae_sim(mean_wf, model, peak_chans, spk_data, cl_good, do_shft=False, zDim=15, sf=1, label=None, prog=None):
     '''
     Calculates autoencoder-based cluster similarity.
     
@@ -77,7 +77,7 @@ def calc_ae_sim(mean_wf, model, peak_chans, spk_data, chans, cl_good, do_shft=Fa
         model (nn.module): trained autoencoder in eval mode and moved to GPU if available.
         peak_chans (1d array): peak channel per cluster.
         spk_data (SpikeDataset): contains spikes from clusters to be compared, must be compatible with model.
-        chans (dict): contains the nearest channel per cluster.
+        # chans (dict): contains the nearest channel per cluster.
         cl_good (1d array): cluster quality labels.
     KWArgs:
         do_shft (bool): True if model and spk_data are for an autoencoder trained on time-shifted snippets.
@@ -99,11 +99,19 @@ def calc_ae_sim(mean_wf, model, peak_chans, spk_data, chans, cl_good, do_shft=Fa
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     loss = 0
+
+    outQt = (label is not None) and (prog is not None)
+    if outQt:
+        prog.setMaximum(len(dl))
+
     print("Calculating latent features...")
     # calculate latent representations of spikes
     with torch.no_grad():
         for idx, data in enumerate(dl, 0):
             print("\rBatch " + str(idx+1) + "/" + str(len(dl)), end="")
+            if outQt:
+                label.setText("Calculating latents - batch " + str(idx+1) + "/" + str(len(dl)))
+                prog.setValue(idx+1)
             spks, lab = data
             if do_shft:
                 targ = spks[:,:,:,5:-5].clone().to(device)
@@ -124,7 +132,7 @@ def calc_ae_sim(mean_wf, model, peak_chans, spk_data, chans, cl_good, do_shft=Fa
     # construct dataframes with peak channel
     ae_df = pd.DataFrame({'cl': spk_lab})
     for i in range(ae_df.shape[0]):
-        ae_df.loc[i, 'peak'] = chans[ae_df.loc[i, 'cl']][0]
+        ae_df.loc[i, 'peak'] = peak_chans[int(ae_df.loc[i, 'cl'])]#chans[ae_df.loc[i, 'cl']][0]
     spk_lat_peak = np.hstack((spk_lat, sf*np.expand_dims(np.array(ae_df['peak']),1)))
                              
     # calculate cluster centroids

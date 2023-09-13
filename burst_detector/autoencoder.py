@@ -14,7 +14,7 @@ from torch.utils.data import Dataset, DataLoader, Subset, WeightedRandomSampler
 from torchvision.transforms import ToTensor
 from sklearn.model_selection import train_test_split
 
-def generate_train_data(data, ci, channel_pos, gti, params):
+def generate_train_data(data, ci, channel_pos, gti, params, label=None, prog=None):
     """
     Generates an autoencoder training dataset from a given recording.
 
@@ -58,17 +58,25 @@ def generate_train_data(data, ci, channel_pos, gti, params):
     if gti['for_shft']:
         gti['pre_samples'] += 5
         gti['post_samples'] += 5
+
+    outQt = (label is not None) and (prog is not None)
+    if outQt:
+        prog.setMaximum(ci['clusters'].max())
     
     # spike extraction loop
     tot = 0
     for i in range(ci['clusters'].max()+1):
-        if (i in ci['counts']) and (ci['counts'][i] > params["min_spikes"]) and (ci['labels'].loc[ci['labels']['cluster_id']==i, 'group'].item() == 'good'):
-            cl_times = ci['times_multi'][i].astype("int32")
+        if (i in ci['counts']) and (ci['counts'][i] > params["min_spikes"]): # and (ci['labels'].loc[ci['labels']['cluster_id']==i, 'group'].item() == 'good'):
+            cl_times = ci['times_multi'][i].astype("int64")
 
             # cap number of spikes
             if (params['max_spikes'] < cl_times.shape[0]):
                 np.random.shuffle(cl_times)
                 cl_times = cl_times[:params["max_spikes"]]
+
+            if outQt:
+                prog.setValue(i)
+                label.setText("Extracting %d spikes from cluster %d/%d" % (cl_times.shape[0], i, ci['clusters'].max()))
 
             # save spikes to file 
             for j in range(cl_times.shape[0]):
@@ -82,6 +90,8 @@ def generate_train_data(data, ci, channel_pos, gti, params):
                     spike = np.nan_to_num(spike)
                     out_name = gti['spk_fld'] +"/cl%d_spk%d.npy" % (i, j)
                     np.save(out_name, spike)
+                    
+    num_spike = len(file_names)
     
     # noise snippet extraction
     if gti['noise']:
@@ -116,9 +126,15 @@ def generate_train_data(data, ci, channel_pos, gti, params):
                     np.save(out_name, noise)
                     ind += 1
                     
+                if ind >= num_spike:
+                    break
+                    
     # construct and save spike labels dataframe
     df = pd.DataFrame({'file':file_names, 'cl':cl_ids}, index=None)
     df.to_csv(gti['spk_fld'] + "/labels.csv", header=False, index=False)
+
+    if outQt:
+        label.setText("Saved spikes from %d clusters." % (ci['clusters'].max()+1))
 
         
 class SpikeDataset(Dataset):
@@ -218,7 +234,8 @@ class CN_AE(nn.Module):
         return out
     
         
-def train_ae(spk_fld, counts, n_filt=256, num_epochs=10, zDim=15, lr=1e-3, pre_samples=10, post_samples=30, model=None, do_shft=False):
+def train_ae(spk_fld, counts, n_filt=256, num_epochs=10, zDim=15, lr=1e-3, pre_samples=10, post_samples=30, model=None, 
+             do_shft=False, label=None, prog=None):
     """
     Trains an autoencoder on the given spike dataset.
 
@@ -253,12 +270,18 @@ def train_ae(spk_fld, counts, n_filt=256, num_epochs=10, zDim=15, lr=1e-3, pre_s
     )
     train_split = Subset(spk_data, train_indices)
     test_split = Subset(spk_data, test_indices)
+    
+    try:
+        wt_noise = 1/len(labels.loc[labels == -1])
+    except ZeroDivisionError:
+        wt_noise = None
 
     # sample weighting
-    sample_weights = [1/counts[int(label)] for label in labels[train_indices]]
-    sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(train_split), replacement=True)
+    # sample_weights = [wt_noise if label == -1 else 1/counts[int(label)] for label in labels[train_indices]]
+    # sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(train_split), replacement=True)
     BATCH_SIZE = 128
-    train_loader = DataLoader(train_split, batch_size=BATCH_SIZE, sampler=sampler)
+    # train_loader = DataLoader(train_split, batch_size=BATCH_SIZE, sampler=sampler)
+    train_loader = DataLoader(train_split, batch_size=BATCH_SIZE)
     test_loader = DataLoader(test_split, batch_size=BATCH_SIZE)
     
     # init network, params                                 
@@ -266,16 +289,23 @@ def train_ae(spk_fld, counts, n_filt=256, num_epochs=10, zDim=15, lr=1e-3, pre_s
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
     test_loss = np.zeros(num_epochs)
+
+    outQt = (label is not None) and (prog is not None)
+    if outQt:
+        prog.setMaximum(num_epochs*(len(train_loader) + len(test_loader)))
     
     # training loop
     for epoch in range(num_epochs):     
-        print('EPOCH %d/%d' % (epoch+1, num_epochs))
+        print('Epoch %d/%d' % (epoch+1, num_epochs))
         running_loss = 0
         last_loss = 0
         net.train()
 
         for idx, data in enumerate(train_loader, 0):
             print("\rTraining batch " + str(idx+1) +'/' + str(len(train_loader)), end="")
+            if outQt:
+                label.setText('EPOCH %d/%d - train batch %d/%d' % (epoch+1, num_epochs, idx+1, len(train_loader)))
+                prog.setValue(epoch*(len(train_loader) + len(test_loader)) + idx)
              
             # pre-train modifications                     
             spks, cl = data
@@ -316,6 +346,9 @@ def train_ae(spk_fld, counts, n_filt=256, num_epochs=10, zDim=15, lr=1e-3, pre_s
         with torch.no_grad():
             for i, data in enumerate(test_loader):
                 print("\rTesting batch " + str(i+1) + "/" + str(len(test_loader)), end="")
+                if outQt:
+                    label.setText('EPOCH %d/%d - test batch %d/%d' % (epoch+1, num_epochs, i+1, len(test_loader)))
+                    prog.setValue(epoch*(len(train_loader) + len(test_loader)) + len(train_loader) + i)
 
                 # pre-test modifications
                 spks, cl = data
@@ -342,5 +375,9 @@ def train_ae(spk_fld, counts, n_filt=256, num_epochs=10, zDim=15, lr=1e-3, pre_s
         test_loss[epoch] = avg_vloss
 
         print("\nLOSS | train: %.4f | test %.4f" % (last_loss, avg_vloss))
+
+    if outQt:
+        prog.setValue(num_epochs*(len(train_loader) + len(test_loader)))
+        label.setText("Done training.")
         
     return net, spk_data

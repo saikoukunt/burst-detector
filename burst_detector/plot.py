@@ -10,7 +10,7 @@ def plot_merges(merges, times_multi, mean_wf, std_wf, spikes, params, nchan=20, 
     for merge in merges:
         merge.sort()
         wf_plot = plot_wfs(merge, mean_wf, std_wf, spikes, nchan, start, stop)
-        corr_plot = plot_corr(merge, times_multi, window_size, bin_size);
+        corr_plot = plot_corr(merge, times_multi, params, window_size, bin_size);
         
         name = os.path.join(params['KS_folder'], "automerge", "merges", "merge" + "".join(["_"+ str(cl) for cl in merge]) + ".pdf")
         file = PdfPages(name)
@@ -83,7 +83,7 @@ def plot_wfs(clust, mean_wf, std_wf, spikes, nchan=10, start=10, stop=60):
     
     return fig
 
-def plot_corr(clust, times_multi, window_size=.102, bin_size=.001):
+def plot_corr(clust, times_multi, params, window_size=.102, bin_size=.001):
     fig, axes = plt.subplots(len(clust), len(clust), figsize=(10,5))
     
     # auto
@@ -111,7 +111,8 @@ def plot_corr(clust, times_multi, window_size=.102, bin_size=.001):
                 ccg = bd.x_correlogram(times_multi[clust[i]]/30000, 
                                        times_multi[clust[j]]/30000,
                                        window_size,
-                                       bin_size)[0]
+                                       bin_size,
+                                       overlap_tol=params['overlap_tol'])[0]
                 a = plt.subplot(len(clust), len(clust), i*len(clust) + (j+1))
                 a.set_facecolor("black")
                 

@@ -28,7 +28,7 @@ def find_times(sp_times, sp_clust, clust_id):
     
     return np.array(cl_times)
 
-def find_times_multi(sp_times, sp_clust, clust_ids):
+def find_times_multi(sp_times, sp_clust, clust_ids, return_inds=False):
     """
     Finds all the spike times for each of the specified clusters.
     
@@ -40,29 +40,42 @@ def find_times_multi(sp_times, sp_clust, clust_ids):
         1-D array containing the cluster identity of each spike.
     clust_ids: list
         The cluster IDs of the desired spike times.
+    return_inds: bool
+        True if a separate list containing the spike indices in each cluster should also be returned.
         
     Returns
     -------
     cl_times: list
         list of NumPy arrays of the spike times for each of the specified clusters.
+    cl_ind: list
+        list of NumPy arrays of the spike indices for each of the specified clusters.
     """
     
     # init big list and reverse dictionary
     cl_times = []
+    cl_inds = []
     cl2lind = {}
     for i in np.arange(len(clust_ids)): 
         cl_times.append([])
+        if return_inds:
+            cl_inds.append([])
         cl2lind[clust_ids[i]] = i 
 
     # count spikes in each cluster    
     for i in np.arange(sp_times.shape[0]):
         if sp_clust[i] in cl2lind:
             cl_times[cl2lind[sp_clust[i]]].append(sp_times[i])
+            if return_inds:
+                cl_inds[cl2lind[sp_clust[i]]].append(i)
             
     # convert inner lists to numpy arrays
     for i in range(len(cl_times)):
         cl_times[i] = np.array(cl_times[i])
+        if return_inds:
+            cl_inds[i] = np.array(cl_inds[i])
     
+    if return_inds:
+        return cl_times, cl_inds
     return cl_times
 
 def spikes_per_cluster(sp_clust):
@@ -140,7 +153,7 @@ def extract_spikes(data, times_multi, sp_clust, clust_id, pre_samples=20, post_s
         times = times[:max_spikes]
         
     # extract spikes
-    spikes = np.zeros((times.shape[0], n_chan, pre_samples+post_samples))
+    spikes = np.zeros((times.shape[0], n_chan, pre_samples+post_samples), dtype='int64')
     for i in range(times.shape[0]):
         spikes[i,:,:] = data[times[i]-pre_samples:times[i]+post_samples,:].T
         
