@@ -1,16 +1,17 @@
+from typing import Any
 import burst_detector as bd
 from argschema import ArgSchemaParser
 import matplotlib.pyplot as plt
 import cProfile
 
-def main():
+def main() -> None:
     from burst_detector import AutoMergeParams, OutputParams
     
     mod = ArgSchemaParser(schema_type=AutoMergeParams)
+    mst: str; xct: str; rpt: str; mt: str; tt: str; num_merge: int; oc: int
     mst, xct, rpt, mt, tt, num_merge, oc = bd.run_merge(mod.args)
-    # cProfile.runctx("bd.run_merge(params)",{"bd":bd},{'params':mod.args})
     
-    output = {
+    output: dict[str, Any] = {
         'mean_time': mst,
         'xcorr_time': xct, 
         'ref_pen_time': rpt,

@@ -203,7 +203,7 @@ class ClusterView(QWidget):
             for i in range(self.tbl.rowCount()):
                 item = self.tbl.item(i, 0)
                 if int(item.text()) in ids:
-                    col_ind = 4 if 'ae_sim' not in self.metrics else 6
+                    col_ind = 4 if self.sim is not None else 6
                     self.tbl.setItem(i, col_ind, QTableWidgetItem(
                         self.metrics.loc[self.metrics['cluster_id'] == int(item.text()), 'cur_label'].item()))
                     end = self.tbl.item(i, self.tbl.columnCount()-1)
@@ -260,7 +260,7 @@ class ClusterView(QWidget):
             if int(self.tbl.item(i, 0).text()) not in self.filtered:    # hide rows that don't meet filter boolean
                 self.tbl.hideRow(i)
             # for SimilarityView, also hide rows that are selected in ClusterView
-            elif ('ae_sim' in self.metrics) and (int(self.tbl.item(i, 0).text()) in self.cv_selected):
+            elif ('ae_sim' in self.metrics) and (int(self.tbl.item(i, 0).text()) in self.selected):
                 self.tbl.hideRow(i)
             else:
                 self.tbl.showRow(i)
@@ -473,6 +473,7 @@ class GraphView(GraphicsLayoutWidget):
 
 # TODO: change wf plot order to match probe geometry
 # TODO: make amplitude magnitude obvious somehow -- maybe plot ch. std deviation background or plot all wf relative to max amp?
+# TODO: MERGE ME WITH PROBE VIEW
 class WaveformView(GraphView):
     def __init__(self, controller, **kwargs):
         super().__init__(controller, **kwargs)
@@ -490,24 +491,100 @@ class WaveformView(GraphView):
         self.wf_mode = 'mean'
         self.olap = False
         self.show_labels = True
+        self.amp_thresh = True
+        self.amp_frac = 1/3
 
         # current plots state variables
         self.cl_list = None
-        self.ch_lo = {}
+        # self.ch_lo = {}
         self.plots = []
 
+        self.ch_grid = None
+        self.cl_grid = None
+        self.ch_lo = None        # num cols x num rows
+        self.items = None        # num cols x num rows x num clusters
+
     def update_wf(self, cl_list, mean_wf, spikes):
-        #TODO: speed optimizations? speed is good for spikes, 
-        # but should distinguish between adding clusters vs reset to make visualizing many clusters faster
+        # # calculate plot layout
+        # ch_grid, cl_grid, ch_range, status = self.calc_layout(cl_list, mean_wf)
+        # if status == "mid_update":
+        #     return
+
+        # # if (ch_grid == self.ch_grid) and (cl_grid == self.cl_grid):
+        # #     return
+        
+        # # first time plotting
+        # if self.ch_grid == None:
+        #     ch_lo = np.zeros_like(ch_grid, dtype='object')
+        #     items = np.zeros((ch_lo.shape[0], ch_lo.shape[1], len(cl_list)))
+
+        #     # calculate ylim
+        #     dat_min = []
+        #     dat_max = []
+        #     for cl in cl_list:
+        #         dat_min.append((mean_wf[cl,ch_range[0]:ch_range[1],:]).min()-10)
+        #         dat_max.append((mean_wf[cl,ch_range[0]:ch_range[1],:]).max()+10)
+        #     dat_min = min(dat_min)
+        #     dat_max = max(dat_max)
+        #     ymin = 2*dat_min if dat_min < 0 else dat_min - .3 * (dat_max-dat_min)
+        #     ymax = 2*dat_max if dat_max > 0 else dat_max + .3 * (dat_max-dat_min)
+
+        #     for i in range(ch_grid.shape[0]):
+        #         for j in range(ch_grid.shape[1]):
+        #             # create a layout for each channel
+        #             ch_lo[i,j] = self.addLayout(row=i, col=j)
+        #             ch = ch_grid[i,j]
+
+        #             # create plots
+        #             for k in range(cl_grid.shape[2]):
+        #                 if self.show_labels:
+        #                     ch_lo[i,j].addLabel(str(ch), angle=0, color="#FFFFFF", size="10pt")
+        #                 plot = ch_lo[i,j].addPlot(row=0, col=k+1)
+        #                 plot.vb.sigRangeChanged.connect(self.update_range)
+        #                 self.plots.append(plot)
+
+        #             # do plotting
+        #             ind = 0
+        #             for k in range(cl_grid.shape[2]):
+        #                 plot = ch_lo[i,j].getItem(row=0, col=k+1)
+        #                 clusts = cl_grid[i,j,k]
+
+        #                 for cl in clusts:    
+        #                     color = (int(colors[ind][0]*255), int(colors[ind][1]*255), int(colors[ind][2]*255))
+        #                     if self.wf_mode == 'mean':
+        #                         items[i,j,ind] = self.draw_mean(plot, mean_wf[cl, ch, :40], color, ymin, ymax)
+        #                     else:
+        #                         items[i,j,ind] = self.draw_spikes(plot, spikes[cl][:,ch,:40], color, ymin, ymax)
+                        
+        #                     ind += 1
+
+        #     # update state variables
+        #     self.items = items
+        #     self.ch_grid = ch_grid
+        #     self.cl_grid = cl_grid
+        #     self.ch_lo = ch_lo
+        #     self.ch_start = ch_range[0]
+        #     self.ch_stop = ch_range[1]
+
+        #     return
+
+        # # modifying existing plots
+
+        # # remove or add channel layout as needed
+
+        # # remove or add plots to channel layouts as needed
+        
+        # # #TODO: speed optimizations? speed is good for spikes, 
+        # # # but should distinguish between adding clusters vs reset to make visualizing many clusters faster
 
         # do nothing if we're in the middle of updating view options
         if (self.ch_stop != -1) and (self.ch_start > self.ch_stop): # we're in the middle of changing channel bounds
-            return
+            return 
         if (self.ch_stop > self.ch_start+self.ch_max):
-            return
+            return 
         if not cl_list: # we're in the middle of merging
-            return
-
+            return  
+        
         # reset channel range if cluster selection is different
         if (self.cl_list is not None) and (self.cl_list[0] != cl_list[0]):
             self.ch_start = -1
@@ -602,6 +679,85 @@ class WaveformView(GraphView):
         status = 'mean waveforms' if self.wf_mode == 'mean' else 'spike waveforms'
         self.dock.set_status(status)
 
+    def calc_layout(self, cl_list, mean_wf):
+        # skip update if necessary
+        # do nothing if we're in the middle of updating view options
+        if (self.ch_stop != -1) and (self.ch_start > self.ch_stop): # we're in the middle of changing channel bounds
+            return None, 'mid_update'
+        if (self.ch_stop > self.ch_start+self.ch_max):
+            return None, 'mid_update'
+        if not cl_list: # we're in the middle of merging
+            return None, 'mid_update' 
+        
+        # reset channel range if cluster selection is different
+        if (self.cl_list is not None) and (self.cl_list[0] != cl_list[0]):
+            self.ch_start = -1
+            self.ch_stop = -1
+
+        # center channel range around average peak if not specified
+        if (self.ch_start == -1) and (self.ch_stop == -1):
+            peaks = []
+            for cl in cl_list:
+                peaks.append(np.argmax(np.max(mean_wf[cl], 1) - np.min(mean_wf[cl], 1)))
+            peak = sum(peaks)/len(cl_list)
+            ch_start = max(int(peak-self.ch_max/2+1), 0)
+            ch_stop = min(int(peak+self.ch_max/2), mean_wf.shape[1]-1)
+
+            # center around first selected cluster if peak doesn't include first peak
+            if peaks[0] < ch_start or peaks[0] > ch_stop:
+                peak = peaks[0]
+                ch_start = max(int(peak-self.ch_max/2+1), 0)
+                ch_stop = min(int(peak+self.ch_max/2), mean_wf.shape[1]-1)
+        # otherwise set relative to the specified bound
+        elif self.ch_start == -1:
+            self.ch_start = max(0,self.ch_stop - self.ch_max + 1)
+        elif self.ch_stop == -1:
+            self.ch_stop = min(self.ctl.recording.params['n_channels_dat'], self.ch_start + self.ch_max - 1)
+        else:
+            ch_stop = self.ch_stop
+            ch_start = self.ch_start
+
+        # calculate grid size
+        if (self.num_rows == -1) and (self.num_cols == -1):      # default number of columns if both are -1
+            num_cols = 3
+        if (self.num_rows == -1):
+            num_cols = self.num_cols if (self.num_cols != -1) else num_cols
+            num_rows = math.ceil((ch_stop-ch_start+1)/num_cols)
+        elif (self.num_cols == -1):
+            num_rows = self.num_rows if (self.num_rows != -1) else num_rows
+            num_cols = math.ceil((ch_stop-ch_start+1)/num_rows)
+        else:
+            num_rows = self.num_rows
+            num_cols = self.num_cols
+
+        # channel grid
+        ch_grid = np.zeros((num_rows, num_cols), dtype='int')
+        for i in range(ch_start, ch_stop+1):
+            row = (i-ch_start)%num_rows
+            col = int((i-ch_start)/num_rows)
+            ch_grid[row, col] = i
+
+        # make layout
+        if not self.olap:
+            cl_grid = np.zeros((num_rows, num_cols, len(cl_list)), dtype="object")
+
+            for i in range(ch_start, ch_stop+1):
+                for j in range(len(cl_list)):
+                    row = (i-ch_start)%num_rows
+                    col = int((i-ch_start)/num_rows)
+                    cl_grid[row, col, j] = [cl_list[j]]
+
+        else:
+            cl_grid = np.zeros((num_rows, num_cols,1), dtype="object")
+            for i in range(ch_start, ch_stop+1):
+                row = (i-ch_start)%num_rows
+                col = int((i-ch_start)/num_rows)
+                cl_grid[row, col, 0] = cl_list
+
+        status = 'replot'
+
+        return ch_grid, cl_grid, [ch_start, ch_stop], status
+
     def update_range(self, viewBox, viewRange):
         """
         Links together the axes of plots for joint panning/zooming
@@ -674,6 +830,7 @@ class WaveformView(GraphView):
             self.ch_stop = ch_stop
             self.update_wf(self.cl_list, self.ctl.recording.mean_wf, self.ctl.recording.spikes)
 
+    # TODO: replace grid plotting functions with something that doesn't replot everything
     def set_num_rows(self):
         num_rows, ok = QInputDialog.getInt(self, 'Set number of rows', 'Set the number of channel rows shown in the WaveformView. \
                                            \n(set -1 to set rows automatically based on number of columns)', 
@@ -692,6 +849,7 @@ class WaveformView(GraphView):
 
     def toggle_mean(self, plt_mean):
         self.wf_mode = 'mean' if plt_mean else 'spike'
+        # TODO: replace me with a function that clears individual plots and replots
         self.update_wf(self.cl_list, self.ctl.recording.mean_wf, self.ctl.recording.spikes)
 
     def toggle_olap(self, olap):
@@ -700,7 +858,9 @@ class WaveformView(GraphView):
 
     def toggle_labels(self, label):
         self.show_labels = True if label else False
-        self.update_wf(self.cl_list, self.ctl.recording.mean_wf, self.ctl.recording.spikes) #TODO:replace me with a function that doesn't replot everything
+        #TODO:replace me with a function that doesn't replot everything
+        self.update_wf(self.cl_list, self.ctl.recording.mean_wf, self.ctl.recording.spikes) 
+
 
 # TODO: draw refractory period lines
 # TODO: turn off axes automatically for > 3? clusters
@@ -1017,6 +1177,7 @@ class ProbeView(GraphView):
         self.max_chan = 8
         self.amp_frac = 1/3
 
+    # TODO: smarter offset
     def update_prb(self, cl_list):
         self.clear()
         self.cl_list = cl_list
@@ -1052,9 +1213,9 @@ class ProbeView(GraphView):
             brush = mkBrush(QColor(color[0], color[1], color[2]))
 
             base.plot(
-                self.ctl.recording.channel_pos[chans_cl,0] + chans_count[chans_cl], # offset for occupied chans
+                self.ctl.recording.channel_pos[chans_cl,0] + 3*chans_count[chans_cl], # offset for occupied chans
                 self.ctl.recording.channel_pos[chans_cl,1], 
-                pen=None, symbol='o', symbolSize=8, symbolPen=pen, symbolBrush=brush)
+                pen=None, symbol='o', symbolSize=7, symbolPen=pen, symbolBrush=brush)
 
             chans_count[chans_cl] += 1
 

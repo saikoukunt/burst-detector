@@ -303,6 +303,48 @@ class MainWindow(qtw.QMainWindow):
         )
         self.edit_menu.addSeparator()
         self.edit_menu.addAction('Filter with condition file')
+
+        # Extensions
+        self.ext_menu = menu_bar.addMenu("Extensions")
+        self.ext_menu.addAction("Kilosort", self.kilo_demo)
+        self.ext_menu.addSeparator()
+        self.ext_menu.addAction("Add extension...")
+
+    def kilo_demo(self):
+        dialog = qtw.QDialog()
+        dialog.setWindowTitle("Set Kilosort parameters")
+        QBtn = qtw.QDialogButtonBox.Ok | qtw.QDialogButtonBox.Cancel
+
+        buttonBox = qtw.QDialogButtonBox(QBtn)
+
+        layout = qtw.QGridLayout()
+        layout.addWidget(buttonBox, 10,  3)
+        layout.addWidget(qtw.QPushButton("Advanced >>"), 10, 0)
+        label = qtw.QLabel("Probe layout")
+        label.setToolTip("Path to probe channel map")
+        layout.addWidget(label,0,0)
+        layout.addWidget(qtw.QLineEdit(""), 0, 1)
+
+        layout.addWidget(qtw.QLabel("Time range"),0,2)
+        layout.addWidget(qtw.QLineEdit(""), 0, 3)
+
+
+        layout.addWidget(qtw.QLabel("N blocks for registration"),1,0)
+        layout.addWidget(qtw.QLineEdit(""), 1, 1)
+
+        layout.addWidget(qtw.QLabel("Threshold"),1,2)
+        layout.addWidget(qtw.QLineEdit(""), 1, 3)
+
+        layout.addWidget(qtw.QLabel("Lambda"),2,0)
+        layout.addWidget(qtw.QLineEdit(""), 2, 1)
+
+        layout.addWidget(qtw.QLabel("AUC for splits"),2,2)
+        layout.addWidget(qtw.QLineEdit(""), 2, 3)
+
+
+        dialog.setLayout(layout)
+        dialog.exec()
+
     
     def add_cur_menu(self, stem, label, grp, key):
         menu = self.edit_menu.addMenu(stem + " to " + label)

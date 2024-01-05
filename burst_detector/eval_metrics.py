@@ -38,7 +38,7 @@ def calc_temp_mismatch(n_clust, labels, templates, channel_map, channel_pos, mea
 
     for i in range(n_clust):
         if (i in counts) and (labels.loc[labels['cluster_id']==i, 'group'].item() == 'good'):
-            mismatch[i] = calc_template_mismatch(i, templates, channel_map, channel_pos, mean_wf)
+            mismatch[i] = temp_mismatch(i, templates, channel_map, channel_pos, mean_wf)
 
     
 

@@ -1,9 +1,10 @@
 import numpy as np
+from numpy.typing import NDArray
 import burst_detector as bd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-def calc_wf_norms(wfs):
+def calc_wf_norms(wfs: NDArray[np.float_]) -> NDArray[np.float_]:
     """
     Calculates the Frobenius norm of each waveform in an array of waveforms.
     
@@ -20,7 +21,7 @@ def calc_wf_norms(wfs):
         Array of waveforms where each waveform has been normalized to have a Frobenius norm
         of 1. Has same shape as input
     """
-    wf_norms = np.zeros(wfs.shape[0])
+    wf_norms:  NDArray[np.float_] = np.zeros(wfs.shape[0])
     
     for i in range(wfs.shape[0]):
         wf_norms[i] = np.linalg.norm(wfs[i])
@@ -28,7 +29,12 @@ def calc_wf_norms(wfs):
     return wf_norms
 
 
-def wf_means_similarity(mean_wf, cl_good, jitter=False, jitter_amt=4):
+def wf_means_similarity(
+        mean_wf: NDArray[np.float_],
+        cl_good: NDArray[np.bool_], 
+        jitter: bool = False, 
+        jitter_amt: int = 4
+    ) -> tuple[NDArray[np.float_], NDArray[np.float_], NDArray[np.int_]]:
     """
     Calculates the normalized pairwise similarity (inner product) between pairs of 
     waveforms in an array of waveforms.
@@ -54,27 +60,28 @@ def wf_means_similarity(mean_wf, cl_good, jitter=False, jitter_amt=4):
     mean_sim: array-like
         A symmetric matrix containing the (maximum) pairwise similarity for each pair of (normalized) 
         waveforms.
-    offsets: array-like
-        Offset that produces that maximum inner product between waveforms
-    mean_wf_norm: array-like
+    wf_norms: array-like
         Array containing normalized input waveforms, where each waveform is normalized with
         respect to its Frobenius norm.
+    offsets: array-like
+        Offset that produces that maximum inner product between waveforms
     """
-    n_clust = mean_wf.shape[0]
-    mean_sim = np.zeros((n_clust, n_clust))
-    offsets = np.zeros((n_clust, n_clust), dtype='int16')
-    wf_norms = calc_wf_norms(mean_wf)
+    n_clust: int = mean_wf.shape[0]
+    mean_sim: NDArray[np.float_] = np.zeros((n_clust, n_clust))
+    offsets: NDArray[np.int_] = np.zeros((n_clust, n_clust), dtype='int16')
+    wf_norms: NDArray[np.float_] = calc_wf_norms(mean_wf)
     
     for i in range(n_clust):
         for j in range(n_clust):
             if cl_good[i] and cl_good[j]:
                 if i != j:
-                    norm = max(wf_norms[i], wf_norms[j])
+                    norm: NDArray[np.float_] = max(wf_norms[i], wf_norms[j])
                     if norm == 0:
                         continue
 
                     if jitter:
-                        sim, off = sim_jitter(mean_wf[i], mean_wf[j], norm, jitter_amt)
+                        sim: float; off: int
+                        sim, off = sim_jitter(mean_wf[i], mean_wf[j], jitter_amt)
                         mean_sim[i, j] = sim/(norm**2)
                         offsets[i,j] = off
                     else:
@@ -83,7 +90,7 @@ def wf_means_similarity(mean_wf, cl_good, jitter=False, jitter_amt=4):
     return mean_sim, wf_norms, offsets
 
 
-def sim_jitter(m1, m2, norm, jitter_amt):
+def sim_jitter(m1: NDArray[np.float_], m2: NDArray[np.float_], jitter_amt: int) -> tuple[float, int]:
     """
     Calculates the maximum inner product between two waveforms with respect to a time shift.
     
@@ -91,8 +98,6 @@ def sim_jitter(m1, m2, norm, jitter_amt):
     ----------
     m1, m2: array-like
         2-D input waveforms of shape (# of channels, # of timepoints)
-    norm: float
-        max of the 2-norms of the input waveforms
     jitter_amt: int
         Number of samples to time-shift in each direction.
         
@@ -100,27 +105,27 @@ def sim_jitter(m1, m2, norm, jitter_amt):
     -------
     mean_sim: float
         The computed maximum inner product.
-    offset: float
+    offset: int
         The time-shift offset that produced the maximum inner product. Specifies the amount that
         m2 shifted (e.g. offset=-1 means m2 was shifted back 1 sample)
     
     """
     offset = 0
-    mean_sim = np.dot(m1.flatten(),m2.flatten())
-    t_length = m1.shape[1]
+    mean_sim: float = np.dot(m1.flatten(),m2.flatten())
+    t_length: int = m1.shape[1]
 
     for i in range(-1*jitter_amt, jitter_amt+1):
         if i < 0:
-            c1_shift = m1[:,:t_length+i]
-            c2_shift = m2[:,i*-1:]
+            c1_shift: NDArray[np.float_] = m1[:,:t_length+i]
+            c2_shift: NDArray[np.float_] = m2[:,i*-1:]
         else:
             c1_shift = m1[:,i:]
-            c2_shift = m2[:,:t_length-i]
+            c2_shift: NDArray[np.float_] = m2[:,:t_length-i]
 
-        off_sim = np.dot(c1_shift.flatten(), c2_shift.flatten())
+        off_sim: float = np.dot(c1_shift.flatten(), c2_shift.flatten())
         if off_sim > mean_sim:
             mean_sim = off_sim
-            offset = i
+            offset: int = i
 
         if (mean_sim - np.dot(m1.flatten(),m2.flatten())) < .1:
             mean_sim = np.dot(m1.flatten(),m2.flatten())
@@ -129,7 +134,15 @@ def sim_jitter(m1, m2, norm, jitter_amt):
     return mean_sim, offset
 
 
-def cross_proj(c1_spikes, c2_spikes, c1_mean, c2_mean, c1_norm, c2_norm, offset=0):
+def cross_proj(
+        c1_spikes: NDArray[np.float_], 
+        c2_spikes: NDArray[np.float_], 
+        c1_mean: NDArray[np.float_], 
+        c2_mean: NDArray[np.float_], 
+        c1_norm: float, 
+        c2_norm: float, 
+        offset: int = 0
+    ) -> tuple[NDArray[np.float_], NDArray[np.float_], NDArray[np.float_], NDArray[np.float_]]:
     """
     Returns the cross-projections of spikes onto normalized mean waveforms for a 
     pair of clusters.
@@ -152,7 +165,7 @@ def cross_proj(c1_spikes, c2_spikes, c1_mean, c2_mean, c1_norm, c2_norm, offset=
     proj_1on1, proj_2on1, proj_1on2, proj_2on2: array-like
         1-D arrays containing the projections of spikes onto mean waveforms. 
     """    
-    t_length = c1_spikes.shape[2]
+    t_length: int = c1_spikes.shape[2]
     
     # adjust for offset
     if offset < 0:
@@ -169,15 +182,14 @@ def cross_proj(c1_spikes, c2_spikes, c1_mean, c2_mean, c1_norm, c2_norm, offset=
         c2_mean = c2_mean[:,:t_length-offset]
         
     # init output arrays
-        
-    proj_1on1 = np.zeros((c1_spikes.shape[0]))
-    proj_2on1 = np.zeros((c2_spikes.shape[0]))
+    proj_1on1: NDArray[np.float_] = np.zeros((c1_spikes.shape[0]))
+    proj_2on1: NDArray[np.float_] = np.zeros((c2_spikes.shape[0]))
     
-    proj_1on2 = np.zeros((c1_spikes.shape[0]))
-    proj_2on2 = np.zeros((c2_spikes.shape[0]))
+    proj_1on2: NDArray[np.float_] = np.zeros((c1_spikes.shape[0]))
+    proj_2on2: NDArray[np.float_] = np.zeros((c2_spikes.shape[0]))
     
     # calculate cross-projections
-    norm = max(c1_norm, c2_norm)
+    norm: float = max(c1_norm, c2_norm)
     
     for i in range(c1_spikes.shape[0]):
         proj_1on1[i] = np.dot(c1_spikes[i].flatten(), c1_mean.flatten())/(c1_norm**2)
@@ -188,94 +200,4 @@ def cross_proj(c1_spikes, c2_spikes, c1_mean, c2_mean, c1_norm, c2_norm, offset=
         proj_2on2[i] = np.dot(c2_spikes[i].flatten(), c2_mean.flatten())/(c2_norm**2)
         
     return proj_1on1, proj_2on1, proj_1on2, proj_2on2
-
-
-def plot_cross_proj(proj_1on1, proj_2on1, proj_1on2, proj_2on2, id_1, id_2, bin_width=.01):
-    """
-    Plots histograms of cross-projection values.
-    
-    Parameters
-    ----------
-    proj_1on1, proj_2on1, proj_1on2, proj_2on2: array-like
-        1-D arrays containing the cross-projections (i.e. output of cross_proj)
-    bin_width: float
-        Width of histogram bins in seconds
-    
-    """
-    
-    bins = np.arange(0,.5,bin_width)
-    
-    plt.figure(figsize=(6,2))
-    
-    plt.subplot(1,2,1)
-    plt.title("Hist of projections onto cluster %d avg"%id_1, fontdict = {'fontsize' : 8})
-    sns.histplot(proj_1on1, bins=bins)
-    sns.histplot(proj_2on1, bins=bins)
-    
-    plt.subplot(1,2,2)
-    plt.title("Hist of projections onto cluster %d avg"%id_2, fontdict = {'fontsize' : 8})
-    sns.histplot(proj_1on2, bins=bins)
-    sns.histplot(proj_2on2, bins=bins)
-    
-    plt.tight_layout()
-    
-
-def hist_cross_proj(proj_1on1, proj_2on1, proj_1on2, proj_2on2, bin_width=.01):
-    """
-    Calculates a histogram of input cross-projection values.
-    
-    Parameters
-    ----------
-    proj_1on1, proj_2on1, proj_1on2, proj_2on2: array-like
-        1-D arrays containing the cross-projections (i.e. output of cross_proj)
-    bin_width: float
-        Width of histogram bins in seconds
-        
-    Returns
-    -------
-    hist_1on1, hist_2on1, hist_1on2, hist_2on2: array-like
-        1-D arrays containing the histograms
-    
-    """
-    
-    bins = np.arange(0,1,bin_width)
-    
-    hist_1on1 = np.histogram(proj_1on1, bins=bins)[0]
-    hist_2on1 = np.histogram(proj_2on1, bins=bins)[0]
-    hist_1on2 = np.histogram(proj_1on2, bins=bins)[0]
-    hist_2on2 = np.histogram(proj_2on2, bins=bins)[0]
-    
-    return hist_1on1, hist_2on1, hist_1on2, hist_2on2
-
-    
-def prob_cross_proj(proj_1on1, proj_2on1, proj_1on2, proj_2on2, bin_width=.01):
-    """
-    Calculates a histogram-based probability distribution on input cross-projection values.
-    
-    Parameters
-    ----------
-    proj_1on1, proj_2on1, proj_1on2, proj_2on2: array-like
-        1-D arrays containing the cross-projections (i.e. output of cross_proj)
-    bin_width: float
-        Width of histogram bins in seconds
-        
-    Returns
-    -------
-    prob_1on1, prob_2on1, prob_1on2, prob_2on2: array-like
-        1-D arrays containing the histograms
-    
-    """
-    
-    hist_1on1, hist_2on1, hist_1on2, hist_2on2 = hist_cross_proj(proj_1on1, proj_2on1, proj_1on2, proj_2on2, bin_width)
-    
-    prob_1on1 = hist_1on1/np.sum(hist_1on1)
-    prob_2on1 = hist_2on1/np.sum(hist_1on1)
-    prob_1on2 = hist_1on2/np.sum(hist_1on1)
-    prob_2on2 = hist_2on2/np.sum(hist_1on1)
-    
-    return prob_1on1, prob_2on1, prob_1on2, prob_2on2
-    
-    
-    
-        
     

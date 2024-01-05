@@ -1,4 +1,6 @@
+from typing import Any
 import numpy as np
+from numpy.typing import NDArray
 import burst_detector as bd
 from scipy.stats import wasserstein_distance
 import pandas as pd
@@ -19,10 +21,19 @@ from torchvision.transforms import ToTensor
 import scipy.spatial.distance as dist
 from sklearn.neighbors import NearestNeighbors
 
-def calc_mean_sim(data, times, clusters, counts, n_clust, labels, mean_wf, params):
+def calc_mean_sim(
+        data: NDArray[np.int_], 
+        times: list[NDArray[np.float_]], 
+        clusters: NDArray[np.int_], 
+        counts: dict[int, int], 
+        n_clust: int, 
+        labels: pd.DataFrame, 
+        mean_wf: NDArray[np.float_], 
+        params: dict[str, Any]
+    ) -> tuple[NDArray[np.float_], NDArray[np.int_], NDArray[np.float_], NDArray[np.float_], NDArray[np.bool_]]:
     
-    cl_good = np.zeros(n_clust, dtype=bool)
-    unique = np.unique(clusters)
+    cl_good: NDArray[np.bool_] = np.zeros(n_clust, dtype=bool)
+    unique: NDArray[np.int_] = np.unique(clusters)
     for i in range(n_clust):
          if (i in unique) and (counts[i] > params['sp_num_thresh']) \
             and (labels.loc[labels['cluster_id']==i, 'group'].item() == 'good'):
@@ -38,8 +49,8 @@ def calc_mean_sim(data, times, clusters, counts, n_clust, labels, mean_wf, param
         
         for i in range(n_clust):
             if cl_good[i]:
-                spikes = bd.extract_spikes(
-                    data, times, clusters, i,
+                spikes: NDArray[np.int_] = bd.extract_spikes(
+                    data, times, i,
                     n_chan=params['n_chan'],
                     pre_samples=params['pre_samples'],
                     post_samples=params['post_samples'],
@@ -48,6 +59,7 @@ def calc_mean_sim(data, times, clusters, counts, n_clust, labels, mean_wf, param
                 mean_wf[i,:,:] = np.nanmean(spikes, axis=0)
     
     # calculate mean similarity
+    mean_sim: NDArray[np.float_]; wf_norms: NDArray[np.float_]; offset: NDArray[np.int_]
     mean_sim, wf_norms, offset = bd.wf_means_similarity(
         mean_wf, 
         cl_good,
@@ -56,7 +68,7 @@ def calc_mean_sim(data, times, clusters, counts, n_clust, labels, mean_wf, param
     )
     
     # check which cluster pairs pass threshold
-    pass_ms = np.zeros_like(mean_sim, dtype='bool')
+    pass_ms: NDArray[np.bool_] = np.zeros_like(mean_sim, dtype='bool')
     for c1 in range(n_clust):
         for c2 in range(c1+1, n_clust):
             if (c1 in counts) and (c2 in counts):
@@ -68,7 +80,8 @@ def calc_mean_sim(data, times, clusters, counts, n_clust, labels, mean_wf, param
     return mean_sim, offset, wf_norms, mean_wf, pass_ms
 
 
-def calc_ae_sim(mean_wf, model, peak_chans, spk_data, cl_good, do_shft=False, zDim=15, sf=1, label=None, prog=None):
+def calc_ae_sim(mean_wf, model, peak_chans, spk_data, cl_good, do_shft=False, zDim=15, sf=1, label=None, prog=None
+                ) -> tuple[NDArray[np.float_], NDArray[np.float_], NDArray[np.float_], NDArray[np.int_]]:
     '''
     Calculates autoencoder-based cluster similarity.
     
@@ -91,27 +104,20 @@ def calc_ae_sim(mean_wf, model, peak_chans, spk_data, cl_good, do_shft=False, zD
     '''
 
     # init dataloader, latent arrays
-    labels = spk_data.spk_labels.iloc[:, 1]
+    labels: NDArray[np.int_] = spk_data.labels
     dl = DataLoader(spk_data, batch_size=128)
-    spk_lat = np.zeros((len(spk_data), zDim))
-    spk_lab = np.zeros(len(spk_data))
+    spk_lat: NDArray[np.float_] = np.zeros((len(spk_data), zDim))
+    spk_lab: NDArray[np.int_] = np.zeros(len(spk_data))
     loss_fn = nn.MSELoss()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     loss = 0
-
-    outQt = (label is not None) and (prog is not None)
-    if outQt:
-        prog.setMaximum(len(dl))
 
     print("Calculating latent features...")
     # calculate latent representations of spikes
     with torch.no_grad():
         for idx, data in enumerate(dl, 0):
             print("\rBatch " + str(idx+1) + "/" + str(len(dl)), end="")
-            if outQt:
-                label.setText("Calculating latents - batch " + str(idx+1) + "/" + str(len(dl)))
-                prog.setValue(idx+1)
             spks, lab = data
             if do_shft:
                 targ = spks[:,:,:,5:-5].clone().to(device)
@@ -127,13 +133,13 @@ def calc_ae_sim(mean_wf, model, peak_chans, spk_data, cl_good, do_shft=False, zD
             spk_lat[128*idx:(idx+1)*128,:] = out.cpu().detach().numpy()
             spk_lab[128*idx:(idx+1)*128] = lab.cpu().detach().numpy()
         
-    print("\nLOSS: " + str(loss.item()/len(dl)))
+    print("\nLOSS: " + str(loss/len(dl)))
             
     # construct dataframes with peak channel
     ae_df = pd.DataFrame({'cl': spk_lab})
     for i in range(ae_df.shape[0]):
         ae_df.loc[i, 'peak'] = peak_chans[int(ae_df.loc[i, 'cl'])]#chans[ae_df.loc[i, 'cl']][0]
-    spk_lat_peak = np.hstack((spk_lat, sf*np.expand_dims(np.array(ae_df['peak']),1)))
+    spk_lat_peak: NDArray[np.float_] = np.hstack((spk_lat, sf*np.expand_dims(np.array(ae_df['peak']),1)))
                              
     # calculate cluster centroids
     lat_df = pd.DataFrame(spk_lat_peak)
@@ -152,7 +158,7 @@ def calc_ae_sim(mean_wf, model, peak_chans, spk_data, cl_good, do_shft=False, zD
     ref_dist = dists[dists[:,1] != 0, 1].mean() + dists[dists[:,1] != 0, 1].std()
     
     # calculate similarity -- ref_dist is scaled to 0.6 similarity
-    ae_sim = np.exp(-0.5*ae_dist/ref_dist)
+    ae_sim: NDArray[np.float_] = np.exp(-0.5*ae_dist/ref_dist)
     
     # ignore self-similarity, low-spike and noise clusters
     for i in range(ae_dist.shape[0]):
@@ -238,7 +244,7 @@ def calc_xcorr_metric(times, clusters, n_clust, pass_ms, params):
     )
     
     # run cross correlogram jobs
-    pool = mp.Pool(mp.cpu_count())
+    pool = mp.Pool(mp.cpu_count()) # type: ignore
     args = []
     for c1 in range(n_clust):
         for c2 in range(c1+1, n_clust):
@@ -463,9 +469,9 @@ def ref_p_func(c1, c2, times, clusters, params):
     from scipy.stats import poisson
 
     # extract spike times
-    cl_times = bd.find_times_multi(times/params['fs'], clusters, [c1, c2])
-    c1_times = cl_times[0]
-    c2_times = cl_times[1]
+    cl_times: list[NDArray[np.float_]] = bd.find_times_multi(times/params['fs'], clusters, [c1, c2])
+    c1_times: NDArray[np.float_] = cl_times[0]
+    c2_times: NDArray[np.float_] = cl_times[1]
 
     # construct possible ref_ps
     ps = np.zeros(len(params["ref_pers"]))

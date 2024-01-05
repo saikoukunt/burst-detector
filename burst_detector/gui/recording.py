@@ -207,8 +207,8 @@ class Recording(object):
         self.spikes[new_id] = temp
 
         # mean_wf
-        # temp = self.counts[cl_list]/sum(self.counts[cl_list]) * self.mean_wf[cl_list]
-        # self.mean_wf = np.concatenate((self.mean_wf, temp), axis=0)
+        temp = self.counts[cl_list]/sum(self.counts[cl_list]) * self.mean_wf[cl_list]
+        self.mean_wf = np.concatenate((self.mean_wf, temp), axis=0)
 
         # expand sim arrays
         temp = -1*np.ones((1,self.n_clust-1))

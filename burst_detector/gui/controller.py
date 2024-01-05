@@ -232,6 +232,10 @@ class Controller(object):
         self.sim_view.set_status_pfx("similar clusters: ")
         self.gui.dockArea.addDock(self.sim_dock, 'bottom', self.clust_dock)
 
+        # connect signals
+        self.clust_view.set_sim(self.sim_view)
+        
+
 
     def create_wf_view(self):
         self.wf_view = WaveformView(self)
@@ -448,13 +452,12 @@ class Controller(object):
         self.prb_view.update_prb(cl_list)
 
 
-
 if __name__ == '__main__':
-    if hasattr(Qt, 'AA_EnableHighDpiScaling'):
-        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    # if hasattr(Qt, 'AA_EnableHighDpiScaling'):
+    #     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
 
-    if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
-        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    # if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
+    #     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)
     control = Controller()

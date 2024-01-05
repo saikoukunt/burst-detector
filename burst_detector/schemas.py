@@ -2,6 +2,8 @@ from argschema import ArgSchema, ArgSchemaParser
 from argschema.schemas import DefaultSchema
 from argschema.fields import InputFile, Nested, InputDir, String, Float, Dict, Int, Bool, NumpyArray, List
 
+# TODO: ADD good_lbls
+
 class AutoMergeParams(ArgSchema):
     # filepaths
     data_filepath = InputFile(required=True, description="Filepath for recording binary")

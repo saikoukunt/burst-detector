@@ -1,34 +1,11 @@
 import numpy as np
+from numpy.typing import NDArray
 
-def find_times(sp_times, sp_clust, clust_id):
-    """
-    Finds all the spike times for the specified cluster.
-    
-    Parameters
-    ----------
-    sp_times: array_like
-        1-D array containing all spike times.
-    sp_clust: array_like
-        1-D array containing the cluster identity of each spike.
-    clust_id: list
-        The cluster ID of the desired spike times.
-        
-    Returns
-    -------
-    cl_times: array_like
-        1-D array of the spike times for the specified cluster.
-    """
-    
-    cl_times = []
-
-    # count spikes in each cluster    
-    for i in np.arange(sp_times.shape[0]):
-        if sp_clust[i] == clust_id:
-            cl_times.append(sp_times[i])
-    
-    return np.array(cl_times)
-
-def find_times_multi(sp_times, sp_clust, clust_ids, return_inds=False):
+def find_times_multi(
+        sp_times: NDArray[np.float_], 
+        sp_clust: NDArray[np.int_], 
+        clust_ids: list[int]
+    )-> list[NDArray[np.float_]]:
     """
     Finds all the spike times for each of the specified clusters.
     
@@ -40,45 +17,32 @@ def find_times_multi(sp_times, sp_clust, clust_ids, return_inds=False):
         1-D array containing the cluster identity of each spike.
     clust_ids: list
         The cluster IDs of the desired spike times.
-    return_inds: bool
-        True if a separate list containing the spike indices in each cluster should also be returned.
         
     Returns
     -------
     cl_times: list
         list of NumPy arrays of the spike times for each of the specified clusters.
-    cl_ind: list
-        list of NumPy arrays of the spike indices for each of the specified clusters.
     """
     
     # init big list and reverse dictionary
     cl_times = []
-    cl_inds = []
     cl2lind = {}
-    for i in np.arange(len(clust_ids)): 
+    for i in range(len(clust_ids)): 
         cl_times.append([])
-        if return_inds:
-            cl_inds.append([])
         cl2lind[clust_ids[i]] = i 
 
     # count spikes in each cluster    
-    for i in np.arange(sp_times.shape[0]):
+    for i in range(sp_times.shape[0]):
         if sp_clust[i] in cl2lind:
             cl_times[cl2lind[sp_clust[i]]].append(sp_times[i])
-            if return_inds:
-                cl_inds[cl2lind[sp_clust[i]]].append(i)
             
     # convert inner lists to numpy arrays
     for i in range(len(cl_times)):
         cl_times[i] = np.array(cl_times[i])
-        if return_inds:
-            cl_inds[i] = np.array(cl_inds[i])
     
-    if return_inds:
-        return cl_times, cl_inds
     return cl_times
 
-def spikes_per_cluster(sp_clust):
+def spikes_per_cluster(sp_clust: NDArray[np.int_])  -> dict[int, int]:
     """
     Counts the number of spikes in each cluster.
     
@@ -89,23 +53,27 @@ def spikes_per_cluster(sp_clust):
         
     Returns
     -------
-    counts: array_like
-        1-D array containng the number of spikes in each cluster, where
+    spikes_per_cluster: dict
+        Contains the number of spikes in each cluster, where
         the index is the cluster ID.
     
     """
     
+    ids: NDArray[np.int_]; counts: NDArray[np.int_]
     ids, counts = np.unique(sp_clust, return_counts=True)
-    counts = dict(zip(ids, counts))
-    
-#     counts = np.zeros((sp_clust.max()+1), dtype='uint16')
-    
-#     for clust_id in sp_clust:
-#         counts[clust_id] += 1
+    spikes_per_cluster = dict(zip(ids, counts))
         
-    return counts
+    return spikes_per_cluster
 
-def extract_spikes(data, times_multi, sp_clust, clust_id, pre_samples=20, post_samples=62, n_chan=385, max_spikes=-1):
+def extract_spikes(
+        data: NDArray[np.int_], 
+        times_multi: list[NDArray[np.float_]], 
+        clust_id: int ,  
+        pre_samples: int = 20, 
+        post_samples: int = 62, 
+        n_chan: int  = 385, 
+        max_spikes: int = -1
+    ) -> NDArray[np.int_]:
     """
     Extracts the waveforms for all spikes from the specified cluster.
     
@@ -116,8 +84,6 @@ def extract_spikes(data, times_multi, sp_clust, clust_id, pre_samples=20, post_s
         Should be passed in as an np.memmap for large datasets.
     times_multi: list of array_like
         List containing arrays of spike times indexed by cluster id (e.g. output of find_times_multi).
-    sp_clust: array_like
-        1-D array containing the cluster identity of each spike.
     clust_id: list
         The cluster ID of the desired spike times.
     pre_samples: int, optional
@@ -139,7 +105,7 @@ def extract_spikes(data, times_multi, sp_clust, clust_id, pre_samples=20, post_s
         Shape is (# of spikes, # of channels, # of timepoints) to match
         ecephys output.
     """
-    times = times_multi[clust_id].astype("int32")
+    times: NDArray[np.int_] = times_multi[clust_id].astype("int32")
     
     # remove times that are too close to ends of recording
     while (times[0] - pre_samples) < 0:
@@ -153,105 +119,50 @@ def extract_spikes(data, times_multi, sp_clust, clust_id, pre_samples=20, post_s
         times = times[:max_spikes]
         
     # extract spikes
-    spikes = np.zeros((times.shape[0], n_chan, pre_samples+post_samples), dtype='int64')
+    spikes: NDArray[np.int_] = np.zeros((times.shape[0], n_chan, pre_samples+post_samples), dtype='int64')
     for i in range(times.shape[0]):
         spikes[i,:,:] = data[times[i]-pre_samples:times[i]+post_samples,:].T
         
     return spikes
-    
-    
-def fix_clust_ids(sp_clust, n_clusters):
-    """
-    Fixes cluster numbering so that cluster IDs are continuous.
-    
-    Parameters
-    ----------
-    sp_clust: array_like
-        1-D array containing the cluster identity of each spike.
-    n_clusters: int
-        The number of clusters.
-        
-    Returns 
-    -------
-    clusters: array_like
-        1-D array containing the fixed cluster IDs.
-    old2new:
-        Dictionary from old cluster IDs to the fixed ones.
-    """
-    
-    # build dict
-    old2new = {}
-    clust_ids = np.unique(sp_clust)
-    for i in np.arange(n_clusters):
-        old2new[clust_ids[i]] = i;
-       
-    # fix cluster ids
-    n = sp_clust.shape[0]
-    clusters = np.zeros(n, dtype=np.uint)
-    for i in np.arange(n):
-        clusters[i] = old2new[sp_clust[i]]
-        
-    return clusters, old2new
-    
-def clust_counts(sp_clust, n_clusters):
-    """
-    Counts the number of spikes in each cluster.
-    
-    Parameters
-    ----------
-    sp_clust: array_like
-        1-D array containing the cluster identity of each spike. Cluster numbering 
-        must be continuous (like the output of fix_clust_ids).
-    n_clusters: int
-        The number of clusters.
 
-    Returns
-    -------
-    counts: array_like
-        1-D array containing the number of spikes in each cluster.
-    """
-
-    # count number of spikes for each cluster
-    counts = np.zeros(n_clusters)
-    n = sp_clust.shape[0]
-    for i in np.arange(n):
-        counts[sp_clust[i]] += 1
-    
-    return counts
-
-def get_closest_channels(channel_positions, channel_index, n=None):
+def get_closest_channels(
+        channel_positions: NDArray[np.float_], 
+        channel_index: int, 
+        n: int|None = None
+    ) -> NDArray[np.int_]:
     """Get the channels closest to a given channel on the probe."""
-    x = channel_positions[:, 0]
-    y = channel_positions[:, 1]
+    x: NDArray[np.float_] = channel_positions[:, 0]
+    y: NDArray[np.float_] = channel_positions[:, 1]
+    x0: float; y0: float
     x0, y0 = channel_positions[channel_index]
-    d = (x - x0) ** 2 + (y - y0) ** 2
-    out = np.argsort(d)
+    d: NDArray[np.float_] = (x - x0) ** 2 + (y - y0) ** 2
+    out: NDArray[np.int_] = np.argsort(d)
     if n:
         out = out[:n]
     return out
 
-def find_best_channels(template, channel_pos, num_best):
-    amplitude_threshold = 0
-    
-    amplitude = template.max(axis=1) - template.min(axis=1)
-    best_channel = min(np.argmax(amplitude), 382)
-    max_amp = amplitude[best_channel]
-    
-    peak_channels = np.nonzero(amplitude >= amplitude_threshold * max_amp)[0]
-    close_channels = get_closest_channels(channel_pos, best_channel, num_best)
+def find_best_channels(
+        template: NDArray[np.float_], 
+        channel_pos: NDArray[np.float_], 
+        num_best: int
+    ) -> tuple[NDArray[np.int_], int]:
 
-    # channel_shanks = (channel_pos[:,0]/250).astype("int")
-    # shank = channel_shanks[best_channel]
-    # channels_on_shank = np.nonzero(channel_shanks == shank)[0]
-    # close_channels = np.intersect1d(close_channels, channels_on_shank)
-    # channel_ids = np.intersect1d(close_channels, peak_channels)
+    amplitude: NDArray[np.float_] = template.max(axis=1) - template.min(axis=1)
+    best_channel: int = min(int(np.argmax(amplitude)), 382)
+    
+    close_channels: NDArray[np.int_] = get_closest_channels(channel_pos, best_channel, num_best)
     
     return close_channels, best_channel
 
-def get_dists(channel_positions, ref_chan, target_chan):
-    x = channel_positions[:, 0]
-    y = channel_positions[:, 1]
+def get_dists(
+        channel_positions: NDArray[np.float_], 
+        ref_chan: int, 
+        target_chans: NDArray[np.int_]
+    ) -> NDArray[np.float_]:
+
+    x: NDArray[np.float_] = channel_positions[:, 0]
+    y: NDArray[np.float_] = channel_positions[:, 1]
+    x0: float; y0: float
     x0, y0 = channel_positions[ref_chan]
-    d = (x - x0) ** 2 + (y - y0) ** 2
-    # d[y < y0] *= -1
-    return d[target_chan]
+    d: NDArray[np.float_] = (x - x0) ** 2 + (y - y0) ** 2
+    return d[target_chans]
