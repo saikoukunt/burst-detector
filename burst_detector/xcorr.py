@@ -1,226 +1,237 @@
+"""
+Functions to efficiently calculate auto- and cross- correlograms.
+"""
+
 import math
+
 import numpy as np
-from numpy.typing import NDArray
 import scipy
+from numpy.typing import NDArray
 from torch import int32
+
 import burst_detector as bd
 
+
 def bin_spike_trains(
-        c1_times: NDArray[np.int_], 
-        c2_times: NDArray[np.int_], 
-        shuffle_bin_width: float
-    ) -> tuple[NDArray[np.float_], NDArray[np.float_]]:
+    c1_times: NDArray[np.int_], c2_times: NDArray[np.int_], bin_width: float
+) -> tuple[NDArray[np.float_], NDArray[np.float_]]:
     """
-    Splits two spike trains into bins.
-    
-    Parameters
-    ----------
-    c1_times, c2_times: array-like
-        An array containing spike times in seconds.
-    shuffle_bin_width: float
-        Width in seconds of bins.
-        
-    Returns
-    -------
-    c1_counts, c2_counts: array-like
-        An array containing binned spike counts
+    Splits two input spike trains into bins.
+
+    ### Args:
+        - `c1_times`, `c2_times` (np.ndarray): The spike trains in seconds.
+        - `bin_width` (float): The width of bins in seconds.
+
+    ### Returns:
+        - `c1_counts`, `c2_counts` (np.ndarray): The binned spike counts.
     """
-    c1_counts: NDArray[np.float_] = np.zeros((math.ceil(max(c1_times)/shuffle_bin_width)), dtype='int32')
-    c2_counts: NDArray[np.float_] = np.zeros((math.ceil(max(c2_times)/shuffle_bin_width)), dtype='int32')
+    c1_counts: NDArray[np.float_] = np.zeros(
+        (math.ceil(max(c1_times) / bin_width)), dtype="int32"
+    )
+    c2_counts: NDArray[np.float_] = np.zeros(
+        (math.ceil(max(c2_times) / bin_width)), dtype="int32"
+    )
 
     for time in c1_times:
-        c1_counts[math.floor(time/shuffle_bin_width)] += 1
-
+        c1_counts[math.floor(time / bin_width)] += 1
     for time in c2_times:
-        c2_counts[math.floor(time/shuffle_bin_width)] += 1
-        
+        c2_counts[math.floor(time / bin_width)] += 1
+
     return c1_counts, c2_counts
 
 
 def x_correlogram(
-        c1_times: NDArray[np.float_], 
-        c2_times: NDArray[np.float_], 
-        window_size: float = .1, 
-        bin_width: float = .001, 
-        overlap_tol: float = 0
-    ) -> tuple[NDArray[np.float_], int]: 
+    c1_times: NDArray[np.float_],
+    c2_times: NDArray[np.float_],
+    window_size: float = 0.1,
+    bin_width: float = 0.001,
+    overlap_tol: float = 0,
+) -> tuple[NDArray[np.float_], int]:
     """
     Calculates the cross correlogram between two spike trains.
-    
-    Parameters
-    ----------
-    c1_times, c2_times: array-like
-        An array containing spike times (sorted least to greatest) in seconds.
-    window_size: float, optional
-        Width of cross correlogram window in seconds.
-    bin_width: float, optional
-        Width of cross correlogram bins in seconds.
-    overlap_tol: float, optional
-        Overlap tolerance in seconds. Spikes within the tolerance of the 
-        reference spike time will not be counted for cross correlogram calculation.
-        
-    Returns
-    -------
-    corrgram: array-like
-        Array containing cross correlogram with c1_times as reference spikes.
-    overlap: int
-        The number of overlapping spikes.
+
+    ### Args:
+        -`c1_times`, `c2_times` (np.ndarray): Spike times (sorted least to greatest)
+            in seconds.
+        -`window_size` (float, optional): Width of cross correlogram window in seconds.
+            Defaults to 100 ms.
+        -`bin_width` (float, optional): Width of cross correlogram bins in seconds.
+            Defaults to 1 ms.
+        -`overlap_tol` (float, optional): Overlap tolerance in seconds. Spikes within
+            the tolerance of the reference spike time will not be counted for cross
+            correlogram calculation.
+
+    ### Returns:
+        -`corrgram` (np.ndarray): The calculated cross-correlogram.
+        -`overlap` (int): The number of overlapping spikes.
     """
-    # swap so c2 is cluster with less spikes
+    # Call the cluster with more spikes c1.
     if c1_times.shape[0] < c2_times.shape[0]:
         temp = c1_times
         c1_times = c2_times
         c2_times = temp
-    
-    # init variables
-    corrgram: NDArray[np.float_] = np.zeros((math.ceil(window_size/bin_width)))
+
+    corrgram: NDArray[np.float_] = np.zeros((math.ceil(window_size / bin_width)))
     overlap = 0
     c2_start = 0
-    
-    # c1 are reference spikes, count c2 spikes
-    for c1_ind in range((c1_times.shape[0])):
-        
-        # move c2 start to first spike in window
-        while (c2_start < c2_times.shape[0]) and (c2_times[c2_start] < (c1_times[c1_ind] - window_size/2)):
-            c2_start: int = c2_start+1
-        
-        # count spikes in window
-        c2_ind: int = c2_start
-        if(c2_ind >= c2_times.shape[0]):
+
+    # To calculate the cross-correlogram, we iterate over c1 spikes as reference spikes
+    # and count the number of c2 spikes that fall within window_size of the
+    # reference spike.
+    for ref_spk in range((c1_times.shape[0])):
+        while (c2_start < c2_times.shape[0]) and (
+            c2_times[c2_start] < (c1_times[ref_spk] - window_size / 2)
+        ):
+            c2_start: int = c2_start + 1  # c2_start tracks the first in-window spike.
+
+        spk_idx: int = c2_start  # spk_idx iterates over in-window c2 spikes.
+        if spk_idx >= c2_times.shape[0]:
             continue
-        
-        # update correlogram counts
-        while (c2_ind < c2_times.shape[0]) and (c2_times[c2_ind] < (c1_times[c1_ind] + window_size/2)):
-            
-            if abs(c1_times[c1_ind] - c2_times[c2_ind]) > overlap_tol:
-                gram_ind: int = min(math.floor((c1_times[c1_ind] - c2_times[c2_ind] + window_size/2)/bin_width), corrgram.shape[0]-1)
-                corrgram[gram_ind] += 1
+
+        while (spk_idx < c2_times.shape[0]) and (
+            c2_times[spk_idx] < (c1_times[ref_spk] + window_size / 2)
+        ):
+            if abs(c1_times[ref_spk] - c2_times[spk_idx]) > overlap_tol:
+                bin_idx: int = min(
+                    math.floor(
+                        (c1_times[ref_spk] - c2_times[spk_idx] + window_size / 2)
+                        / bin_width
+                    ),
+                    corrgram.shape[0] - 1,
+                )
+                corrgram[bin_idx] += 1
             else:
                 overlap += 1
-                
-            c2_ind = c2_ind+1
-    
+            spk_idx = spk_idx + 1
+
     return corrgram, overlap
 
 
 def auto_correlogram(
-        c1_times: NDArray[np.float_], 
-        window_size: float = .25, 
-        bin_width: float = .001, 
-        overlap_tol: float = 0
-    ) -> NDArray[np.float_]: 
+    c1_times: NDArray[np.float_],
+    window_size: float = 0.25,
+    bin_width: float = 0.001,
+    overlap_tol: float = 0,
+) -> NDArray[np.float_]:
     """
-    Calculates the auto correlogram for one spike train.
-    
-    Parameters
-    ----------
-    c1_times: array-like
-        An array containing spike times (sorted least to greatest) in seconds.
-    window_size: float
-        Width of cross correlogram window in seconds.
-    bin_width: float
-        Width of cross correlogram bins in seconds.
-    overlap_tol: float, optional
-        Overlap tolerance in seconds. Spikes within the tolerance of the 
-        reference spike time will not be counted for cross correlogram calculation.
-        
-    Returns
-    -------
-    corrgram: array-like
-        Array containing autocorrelogram with c1_times.
-    overlap: int
-        The number of overlapping spikes.
+    Calculates the auto correlogram for a spike train.
+
+    ### Args:
+        -`c1_times` (np.ndarray): Spike times (sorted least to greatest)
+            in seconds.
+        -`window_size` (float, optional): Width of cross correlogram window in seconds.
+            Defaults to 100 ms.
+        -`bin_width` (float, optional): Width of cross correlogram bins in seconds.
+            Defaults to 1 ms.
+        -`overlap_tol` (float, optional): Overlap tolerance in seconds. Spikes within
+            the tolerance of the reference spike time will not be counted for cross
+            correlogram calculation.
+
+    ### Returns:
+        -`corrgram` (np.ndarray): The calculated cross-correlogram.
     """
-    # init variables
-    corrgram: NDArray[np.float_] = np.zeros((math.ceil(window_size/bin_width)))
+    corrgram: NDArray[np.float_] = np.zeros((math.ceil(window_size / bin_width)))
     start = 0
-    
-    # ind1 is reference spike, count ind2 spikes
-    for ind1 in range(c1_times.shape[0]):
-        
-        # move start to first spike in window
-        while (start < c1_times.shape[0]) and (c1_times[start] < (c1_times[ind1] - window_size/2)):
-            start: int = start+1
-        
-        # count spikes in window
-        ind2: int = start
-        if(ind2 >= c1_times.shape[0]):
+
+    # To calculate the auto-correlogram, we iterate over spikes as reference spikes
+    # and count the number of other spikes that fall within window_size of the
+    # reference spike.
+    for ref_spk in range(c1_times.shape[0]):
+        while (start < c1_times.shape[0]) and (
+            c1_times[start] < (c1_times[ref_spk] - window_size / 2)
+        ):
+            start: int = start + 1  # start tracks the first in-window spike.
+
+        spk_idx: int = start  # spk_idx iterates over in-window spikes.
+        if spk_idx >= c1_times.shape[0]:
             continue
-        
-        while (ind2 < c1_times.shape[0]) and (c1_times[ind2] < (c1_times[ind1] + window_size/2)):
-            if (ind1 != ind2) and (abs(c1_times[ind1] - c1_times[ind2]) > overlap_tol):
-                gram_ind: int = min(math.floor((c1_times[ind1] - c1_times[ind2] + window_size/2)/bin_width), corrgram.shape[0]-1)
+
+        while (spk_idx < c1_times.shape[0]) and (
+            c1_times[spk_idx] < (c1_times[ref_spk] + window_size / 2)
+        ):
+            if (ref_spk != spk_idx) and (
+                abs(c1_times[ref_spk] - c1_times[spk_idx]) > overlap_tol
+            ):
+                gram_ind: int = min(
+                    math.floor(
+                        (c1_times[ref_spk] - c1_times[spk_idx] + window_size / 2)
+                        / bin_width
+                    ),
+                    corrgram.shape[0] - 1,
+                )
                 corrgram[gram_ind] += 1
-            ind2: int = ind2+1
-    
+            spk_idx: int = spk_idx + 1
+
     return corrgram
 
 
 def xcorr_sig(
-        xgram: NDArray[np.float_], 
-        shfl_xgram: NDArray[np.float_], 
-        window_size: float, 
-        xcorr_bin_width: float, 
-        max_window: float = .25, 
-        min_xcorr_rate: float = 0
-    ) -> float:
+    xgram: NDArray[np.float_],
+    null_xgram: NDArray[np.float_],
+    window_size: float,
+    xcorr_bin_width: float,
+    max_window: float = 0.25,
+    min_xcorr_rate: float = 0,
+) -> float:
     """
-    Calculates the cross-correlation significance metric for a cluster pair. If the ccg doesn't have a firing rate >
-    min_xcorr_rate the window_size is doubled until it does or window_size == max_window. If window_size == max_window
-    and the firing rate is still not high enough, the calculated sig is penalized.
-    
-    Parameters
-    ----------
-    xgram: array-like
-        The raw cross-correlogram for the cluster pair.
-    shfl_xgram: array_like
-        The baseline cross-correlogram for the cluster pair.
-    window_size: float, optional
-        The width in seconds of the window used to calculate xgram and shfl_xgram.
-    xcorr_bin_width: float, optional
-        The width in seconds of the bins used to calculate xgram and shfl_xgram.
-    min_xcorr_rate: int, optional
-        The minimum number of spikes/s that must be in the cross correlogram for the
-        result to be valid. Default is 0.
-        
-    Returns
-    -------
-    sig: float
-        The calculated cross-correlation significance metric.
+    Calculates a cross-correlation significance metric for a cluster pair.
+
+    Uses the wasserstein distance between an observed cross-correlogram and a null
+    distribution as an estimate of how significant the dependence between
+    two neurons is. Low spike count cross-correlograms have large wasserstein
+    distances from null by chance, so we first try to expand the window size. If
+    that fails to yield enough spikes, we apply a penalty to the metric.
+
+    ### Args:
+        - `xgram` (np.ndarray): The raw cross-correlogram for the cluster pair.
+        - `null_dist` (np.ndarray): The null cross-correlogram for the cluster pair.
+            In practice, this is usually a uniform distribution.
+        - `window_size` (float): The width in seconds of the default ccg window.
+        - `xcorr_bin_width` (float): The width in seconds of the bin size of the
+            input ccgs.
+        - `max_window` (float): The largest allowed window size during window
+            expansion. Defaults to 250 ms.
+        - `min_xcorr_rate` (float): The minimum ccg firing rate in Hz. Defaults to 0 Hz.
+
+    ### Returns:
+        - `sig` (float): The calculated cross-correlation significance metric.
     """
-    
-    # reduce ccgs to window of interest
-    num_bins: int = math.ceil(round(window_size/xcorr_bin_width)/2) # 0.5 of bins for whole window
-    
-    ref_start = int(xgram.shape[0]/2 - num_bins)
-    ref_end = int(xgram.shape[0]/2 - 1 + num_bins)
-    
-    xgram_win: NDArray[np.float_] = xgram[ref_start:ref_end+1]
-    shfl_xgram_win: NDArray[np.float_] = shfl_xgram[ref_start:ref_end+1]
-    
-    # expand window if xgram doesn't have a high enough 'firing' rate
-    while (xgram_win.sum() < min_xcorr_rate*window_size) and (window_size < max_window):
-        # expand window
+    num_bins_half: int = math.ceil(round(window_size / xcorr_bin_width) / 2)
+    start_idx = int(xgram.shape[0] / 2 - num_bins_half)
+    end_idx = int(xgram.shape[0] / 2 - 1 + num_bins_half)
+    xgram_win: NDArray[np.float_] = xgram[start_idx : end_idx + 1]
+    null_win: NDArray[np.float_] = null_xgram[start_idx : end_idx + 1]
+
+    # If the ccg doesn't contain enough spikes, we double the window size until
+    # it does, or until window_size == max_window.
+    while (xgram_win.sum() < min_xcorr_rate * window_size) and (
+        window_size < max_window
+    ):
         window_size = min(max_window, 2 * window_size)
-        num_bins = math.ceil(round(window_size/xcorr_bin_width)/2) # 0.5 of bins for whole window
-        ref_start = int(xgram.shape[0]/2 - num_bins)
-        ref_end = int(xgram.shape[0]/2 - 1 + num_bins)
-        xgram_win = xgram[ref_start:ref_end+1]
-        shfl_xgram_win = shfl_xgram[ref_start:ref_end+1]
-        
-    if(xgram_win.sum() == 0) or (shfl_xgram_win.sum()==0):
+        num_bins_half = math.ceil(round(window_size / xcorr_bin_width) / 2)
+        start_idx = int(xgram.shape[0] / 2 - num_bins_half)
+        end_idx = int(xgram.shape[0] / 2 - 1 + num_bins_half)
+        xgram_win = xgram[start_idx : end_idx + 1]
+        null_win = null_xgram[start_idx : end_idx + 1]
+    if (xgram_win.sum() == 0) or (null_win.sum() == 0):
         return 0
-    
-    # wasserstein distance
-    num_bins *= 2
-    sig: float = scipy.stats.wasserstein_distance(
-        np.arange(num_bins)/num_bins, 
-        np.arange(num_bins)/num_bins, 
-        xgram_win, 
-        shfl_xgram_win)/0.25  # 0.25 is maximum possible wass dist for a ccg
-    
-    # penalize sig for pairs with low ccg spike counts
-    if min_xcorr_rate != 0:
-        sig *= min(1, (xgram_win.sum()/(min_xcorr_rate * window_size))**2)
-    
+
+    # To normalize the wasserstein distance, we divide by 0.25, which is the
+    # wasserstein distance between uniform and delta distributions.
+    num_bins_half *= 2
+    sig: float = (
+        scipy.stats.wasserstein_distance(
+            np.arange(num_bins_half) / num_bins_half,
+            np.arange(num_bins_half) / num_bins_half,
+            xgram_win,
+            null_win,
+        )
+        / 0.25
+    )
+
+    # Low spike count penalty is the squared ratio of the observed spikes to the minimum
+    # number of spikes.
+    if xgram_win.sum() < (min_xcorr_rate * window_size):
+        sig *= (xgram_win.sum() / (min_xcorr_rate * window_size)) ** 2
+
     return sig

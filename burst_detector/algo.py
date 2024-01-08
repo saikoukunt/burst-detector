@@ -1,194 +1,229 @@
-import numpy as np
-from numpy.typing import NDArray
-import burst_detector as bd
-import pandas as pd
+import json
 import math
 import os
-import json
 import time
-import torch
-from torchvision.transforms import ToTensor
 from typing import Any, TypeAlias
 
+import numpy as np
+import pandas as pd
+import torch
+from numpy.typing import NDArray
+from torchvision.transforms import ToTensor
+
+import burst_detector as bd
+
+
 def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
-    os.makedirs(os.path.join(params['KS_folder'], "automerge"), exist_ok=True)
-    os.makedirs(os.path.join(params['KS_folder'], "automerge", "merges"), exist_ok=True)
-    
-    # load spike times, cluster id and quality labels, channel positions
+    os.makedirs(os.path.join(params["KS_folder"], "automerge"), exist_ok=True)
+    os.makedirs(os.path.join(params["KS_folder"], "automerge", "merges"), exist_ok=True)
+
+    # Load sorting and recording info.
     print("Loading files...")
-    times: NDArray[np.float_] = np.load(os.path.join(params['KS_folder'], 'spike_times.npy')).flatten()
-    clusters: NDArray[np.int_] = np.load(os.path.join(params['KS_folder'], 'spike_clusters.npy')).flatten()
-    cl_labels: pd.DataFrame = pd.read_csv(os.path.join(params['KS_folder'], 'cluster_group.tsv'), sep="\t") 
-    channel_pos: NDArray[np.float_] = np.load(os.path.join(params['KS_folder'], "channel_positions.npy"))
-    
-    # organize spike times by clusters
+    times: NDArray[np.float_] = np.load(
+        os.path.join(params["KS_folder"], "spike_times.npy")
+    ).flatten()
+    clusters: NDArray[np.int_] = np.load(
+        os.path.join(params["KS_folder"], "spike_clusters.npy")
+    ).flatten()
+    cl_labels: pd.DataFrame = pd.read_csv(
+        os.path.join(params["KS_folder"], "cluster_group.tsv"), sep="\t"
+    )
+    channel_pos: NDArray[np.float_] = np.load(
+        os.path.join(params["KS_folder"], "channel_positions.npy")
+    )
+
+    # Compute useful cluster info.
     n_clust: int = clusters.max() + 1
     counts: dict[int, int] = bd.spikes_per_cluster(clusters)
-    times_multi: list[NDArray[np.float_]] = bd.find_times_multi(times, clusters, np.arange(clusters.max()+1))
-    
-    # load recorded voltage data
-    rawData = np.memmap(params['data_filepath'], dtype=params['dtype'], mode='r')
-    data: NDArray[np.int16] = np.reshape(rawData, (int(rawData.size/params['n_chan']), params['n_chan']))
-    
-    # filter out low-spike/noise units
+    times_multi: list[NDArray[np.float_]] = bd.find_times_multi(
+        times, clusters, np.arange(clusters.max() + 1)
+    )
+
+    # Load the ephys recording.
+    rawData = np.memmap(params["data_filepath"], dtype=params["dtype"], mode="r")
+    data: NDArray[np.int16] = np.reshape(
+        rawData, (int(rawData.size / params["n_chan"]), params["n_chan"])
+    )
+
+    # Mark units that we don't want to consider.
     cl_good: NDArray[np.bool_] = np.zeros(n_clust, dtype=bool)
     unique: NDArray[np.int_] = np.unique(clusters)
     for cl in range(n_clust):
-         if (cl in unique) and (counts[cl] > params['min_spikes']) \
-            and (cl_labels.loc[cl_labels['cluster_id']==cl, 'group'].item() in params['good_lbl']):
-                cl_good[cl] = True
-    
-    
-    # load mean_wf if it exists
+        if (
+            (cl in unique)
+            and (counts[cl] > params["min_spikes"])
+            and (
+                cl_labels.loc[cl_labels["cluster_id"] == cl, "group"].item()
+                in params["good_lbl"]
+            )
+        ):
+            cl_good[cl] = True
+
+    # Calculate cluster mean waveforms if needed.
     spikes: dict[int, NDArray[np.int_]] | None = None
     try:
-        mean_wf: NDArray[np.float_] = np.load(os.path.join(params['KS_folder'], 'mean_waveforms.npy'))
-        std_wf: NDArray[np.float_] = np.load(os.path.join(params['KS_folder'], 'std_waveforms.npy'))
+        mean_wf: NDArray[np.float_] = np.load(
+            os.path.join(params["KS_folder"], "mean_waveforms.npy")
+        )
+        std_wf: NDArray[np.float_] = np.load(
+            os.path.join(params["KS_folder"], "std_waveforms.npy")
+        )
     except OSError:
-        print("mean_waveforms.npy doesn't exist, calculating mean waveforms on the fly...")
+        print(
+            "mean_waveforms.npy doesn't exist, calculating mean waveforms on the fly..."
+        )
         mean_wf: NDArray[np.float_] = np.zeros(
-            (n_clust, 
-             params['n_chan'],
-             params['pre_samples'] + params['post_samples'])
-        ) 
+            (n_clust, params["n_chan"], params["pre_samples"] + params["post_samples"])
+        )
         std_wf: NDArray[np.float_] = np.zeros_like(mean_wf)
         spikes = {}
         for i in range(n_clust):
             if cl_good[i]:
                 spikes[i] = bd.extract_spikes(
-                    data, times_multi, i,
-                    n_chan=params['n_chan'],
-                    pre_samples=params['pre_samples'],
-                    post_samples=params['post_samples'],
-                    max_spikes=params['max_spikes']
+                    data,
+                    times_multi,
+                    i,
+                    n_chan=params["n_chan"],
+                    pre_samples=params["pre_samples"],
+                    post_samples=params["post_samples"],
+                    max_spikes=params["max_spikes"],
                 )
-                mean_wf[i,:,:] = np.nanmean(spikes[i], axis=0)
-                std_wf[i,:,:] = np.nanstd(spikes[i], axis=0)
-        np.save(os.path.join(params['KS_folder'], 'mean_waveforms.npy'), mean_wf)
-        np.save(os.path.join(params['KS_folder'], 'std_waveforms.npy'), std_wf)
-    peak_chans: NDArray[np.int_] = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf,2),1)
-    
+                mean_wf[i, :, :] = np.nanmean(spikes[i], axis=0)
+                std_wf[i, :, :] = np.nanstd(spikes[i], axis=0)
+        np.save(os.path.join(params["KS_folder"], "mean_waveforms.npy"), mean_wf)
+        np.save(os.path.join(params["KS_folder"], "std_waveforms.npy"), std_wf)
+    peak_chans: NDArray[np.int_] = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf, 2), 1)
 
     t0: float = time.time()
-    print("Done, calculating cluster similarity...")
-    
-    # calculate similarity
-    sim: NDArray[np.float_] = np.ndarray(0)
-    if params['sim_type'] == 'ae':
-        # extract spike snippets 
-        print("Extracting spike snippets to train autoencoder...")
-        spk_fld: str = os.path.join(params['KS_folder'], "automerge", "spikes")
-        ci: dict[str, Any] = {'times': times,
-            'times_multi': times_multi,
-            'clusters': clusters,
-            'counts': counts,
-            'labels': cl_labels,
-            'mean_wf': mean_wf
-        }
-        gti: dict[str, Any] = {
-            'spk_fld': spk_fld,
-            'pre_samples': params['ae_pre'],
-            'post_samples': params['ae_post'],
-            'num_chan': params['ae_chan'],
-            'for_shft': params['ae_shft']
-        }
-        spk_snips: torch.Tensor; cl_ids: NDArray[np.int_]
-        spk_snips, cl_ids = bd.generate_train_data(data, ci, channel_pos, gti, params)
 
-        # train model if necessary
-        if params['model_path'] == None:
+    print("Done, calculating cluster similarity...")
+    sim: NDArray[np.float_] = np.ndarray(0)
+
+    # Autoencoder-based similarity calculation.
+    if params["sim_type"] == "ae":
+        print("Extracting spike snippets to train autoencoder...")
+        spk_fld: str = os.path.join(params["KS_folder"], "automerge", "spikes")
+        ci: dict[str, Any] = {
+            "times": times,
+            "times_multi": times_multi,
+            "clusters": clusters,
+            "counts": counts,
+            "labels": cl_labels,
+            "mean_wf": mean_wf,
+        }
+        ext_params: dict[str, Any] = {
+            "spk_fld": spk_fld,
+            "pre_samples": params["ae_pre"],
+            "post_samples": params["ae_post"],
+            "num_chan": params["ae_chan"],
+            "for_shft": params["ae_shft"],
+        }
+        spk_snips: torch.Tensor
+        cl_ids: NDArray[np.int_]
+        spk_snips, cl_ids = bd.generate_train_data(
+            data, ci, channel_pos, ext_params, params
+        )
+
+        # Train the autoencoder if needed.
+        if params["model_path"] == None:
             print("Training autoencoder...")
-            net, spk_data = bd.train_ae(spk_snips, cl_ids, do_shft=params['ae_shft'], num_epochs=params['ae_epochs'])
-            torch.save(net.state_dict(), os.path.join(params['KS_folder'], "automerge", "ae.pt"))
-            print("Autoencoder saved in " + str(os.path.join(params['KS_folder'], "automerge", "ae.pt")))
+            net, spk_data = bd.train_ae(
+                spk_snips,
+                cl_ids,
+                do_shft=params["ae_shft"],
+                num_epochs=params["ae_epochs"],
+            )
+            torch.save(
+                net.state_dict(),
+                os.path.join(params["KS_folder"], "automerge", "ae.pt"),
+            )
+            print(
+                "Autoencoder saved in "
+                + str(os.path.join(params["KS_folder"], "automerge", "ae.pt"))
+            )
         else:
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            net: bd.CN_AE = bd.CN_AE().to(device)                         
-            net.load_state_dict(torch.load(params['model_path']))
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            net: bd.CN_AE = bd.CN_AE().to(device)
+            net.load_state_dict(torch.load(params["model_path"]))
             net.eval()
             spk_data: bd.SpikeDataset = bd.SpikeDataset(spk_snips, cl_ids, ToTensor())
-        
-        # calculate ae_similarity
-        spk_lat_peak: NDArray[np.float_]; 
-        lat_mean: NDArray[np.float_]; 
+
+        # Calculate similarity using distances in the autoencoder latent space.
+        spk_lat_peak: NDArray[np.float_]
+        lat_mean: NDArray[np.float_]
         spk_lab: NDArray[np.int_]
         sim, spk_lat_peak, lat_mean, spk_lab = bd.calc_ae_sim(
-            mean_wf, net, peak_chans, spk_data, cl_good, do_shft=params['ae_shft'])
+            mean_wf, net, peak_chans, spk_data, cl_good, do_shft=params["ae_shft"]
+        )
         pass_ms = sim > params["sim_thresh"]
-    elif params['sim_type'] == 'mean':
-        # calculate mean similarity
-        offset: NDArray[np.int_]; 
-        wf_norms: NDArray[np.float_]; 
+    elif params["sim_type"] == "mean":
+        # Calculate similarity using inner products between waveforms.
+        offset: NDArray[np.int_]
+        wf_norms: NDArray[np.float_]
         pass_ms: NDArray[np.bool_]
         sim, offset, wf_norms, mean_wf, pass_ms = bd.calc_mean_sim(
-            data, 
-            times_multi, 
-            clusters, 
-            counts, 
-            n_clust,
-            cl_labels,
-            mean_wf,
-            params
+            data, times_multi, clusters, counts, n_clust, cl_labels, mean_wf, params
         )
         sim[pass_ms == False] = 0
     pass_ms = sim > params["sim_thresh"]
-    print("Found %d candidate cluster pairs" % (pass_ms.sum()/2))
+    print("Found %d candidate cluster pairs" % (pass_ms.sum() / 2))
     t1: float = time.time()
-    mean_sim_time: str = time.strftime('%H:%M:%S', time.gmtime(t1-t0))
-    
-    
-    # calculate xcorr metric
+    mean_sim_time: str = time.strftime("%H:%M:%S", time.gmtime(t1 - t0))
+
+    # Calculate a significance metric for cross-correlograms.
     print("Calculating cross-correlation metric...")
-    xcorr_sig: NDArray[np.float_]; x_grams: NDArray; shfl_xgrams: NDArray; 
+    xcorr_sig: NDArray[np.float_]
+    x_grams: NDArray
+    shfl_xgrams: NDArray
     xcorr_sig, xgrams, shfl_xgrams = bd.calc_xcorr_metric(
-        times, 
-        clusters,
-        n_clust, 
-        pass_ms, 
-        params
+        times_multi, n_clust, pass_ms, params
     )
     t4: float = time.time()
-    xcorr_time: str = time.strftime('%H:%M:%S', time.gmtime(t4-t1))
+    xcorr_time: str = time.strftime("%H:%M:%S", time.gmtime(t4 - t1))
     print("Cross correlation took %s" % xcorr_time)
 
-    
-    
-    # calculate refractory penalty
+    # Calculate a refractor period penalty.
     print("Calculating refractory period penalty...")
-    ref_pen: NDArray[np.float_]; ref_per: NDArray[np.float_]
-    ref_pen, ref_per = bd.calc_ref_p(times, clusters, n_clust, pass_ms, xcorr_sig,\
-                                   params)
+    ref_pen: NDArray[np.float_]
+    ref_per: NDArray[np.float_]
+    ref_pen, ref_per = bd.calc_ref_p(
+        times_multi, clusters, n_clust, pass_ms, xcorr_sig, params
+    )
     t5: float = time.time()
-    ref_pen_time: str = time.strftime('%H:%M:%S', time.gmtime(t5-t4))
+    ref_pen_time: str = time.strftime("%H:%M:%S", time.gmtime(t5 - t4))
     print("Refractory period penalty took %s" % ref_pen_time)
 
-    
-    
-    # calculate final metric
+    # Calculate the final metric.
     print("Calculating final metric...")
     final_metric: NDArray[np.float_] = np.zeros_like(sim)
-    
     for c1 in range(n_clust):
         for c2 in range(c1, n_clust):
-            met: float = sim[c1,c2] + \
-            params['xcorr_coeff']*xcorr_sig[c1,c2] - \
-            params['ref_pen_coeff']*ref_pen[c1,c2]
-            
-            final_metric[c1,c2] = max(met, 0)
-            final_metric[c2,c1] = max(met, 0)
+            met: float = (
+                sim[c1, c2]
+                + params["xcorr_coeff"] * xcorr_sig[c1, c2]
+                - params["ref_pen_coeff"] * ref_pen[c1, c2]
+            )
+
+            final_metric[c1, c2] = max(met, 0)
+            final_metric[c2, c1] = max(met, 0)
+
+    # Calculate/perform merges.
     print("Merging...")
-    
-    channel_map: NDArray[np.int_] = np.load(os.path.join(params['KS_folder'], 'channel_map.npy')).flatten()
-    
-    old2new: dict[int, int]; new2old: dict[int, int]
+    channel_map: NDArray[np.int_] = np.load(
+        os.path.join(params["KS_folder"], "channel_map.npy")
+    ).flatten()
+
+    old2new: dict[int, int]
+    new2old: dict[int, list[int]]
     old2new, new2old = bd.merge_clusters(
-        clusters, counts, mean_wf, final_metric, params)
-   
+        clusters, counts, mean_wf, final_metric, params
+    )
+
     t6: float = time.time()
-    merge_time: str = time.strftime('%H:%M:%S', time.gmtime(t6-t5))
-    
+    merge_time: str = time.strftime("%H:%M:%S", time.gmtime(t6 - t5))
+
     print("Merging took %s" % merge_time)
-    
+
     print("Writing to output...")
     if spikes == None:
         spikes = {}
@@ -197,25 +232,39 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
             if cl_good[i]:
                 print("\r" + str(i) + "/" + str(clusters.max()), end="")
                 spikes[i] = bd.extract_spikes(
-                    data, times_multi, i,
-                    n_chan=params['n_chan'],
-                    pre_samples=params['pre_samples'],
-                    post_samples=params['post_samples'],
-                    max_spikes=params['max_spikes']
+                    data,
+                    times_multi,
+                    i,
+                    n_chan=params["n_chan"],
+                    pre_samples=params["pre_samples"],
+                    post_samples=params["post_samples"],
+                    max_spikes=params["max_spikes"],
                 )
-            
-    with open(os.path.join(params['KS_folder'], "automerge", "old2new.json"), "w") as file:
-        file.write(json.dumps(old2new, separators=(',\n', ':')))
 
-    with open(os.path.join(params['KS_folder'], "automerge", "new2old.json"), "w") as file:
-        file.write(json.dumps(new2old, separators=(',\n', ':')))
-        
-    merges: list[int] = list(new2old.values())
+    with open(
+        os.path.join(params["KS_folder"], "automerge", "old2new.json"), "w"
+    ) as file:
+        file.write(json.dumps(old2new, separators=(",\n", ":")))
+
+    with open(
+        os.path.join(params["KS_folder"], "automerge", "new2old.json"), "w"
+    ) as file:
+        file.write(json.dumps(new2old, separators=(",\n", ":")))
+
+    merges: list[list[int]] = list(new2old.values())
     bd.plot_merges(merges, times_multi, mean_wf, std_wf, spikes, params)
-    
+
     t7: float = time.time()
-    total_time: str = time.strftime('%H:%M:%S', time.gmtime(t7-t0))
-    
+    total_time: str = time.strftime("%H:%M:%S", time.gmtime(t7 - t0))
+
     print("Total time: %s" % total_time)
-    
-    return mean_sim_time, xcorr_time, ref_pen_time, merge_time, total_time, len(list(new2old.keys())), int(clusters.max())
+
+    return (
+        mean_sim_time,
+        xcorr_time,
+        ref_pen_time,
+        merge_time,
+        total_time,
+        len(list(new2old.keys())),
+        int(clusters.max()),
+    )
