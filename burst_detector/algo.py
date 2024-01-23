@@ -54,7 +54,7 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
             and (counts[cl] > params["min_spikes"])
             and (
                 cl_labels.loc[cl_labels["cluster_id"] == cl, "group"].item()
-                in params["good_lbl"]
+                in params["good_lbls"]
             )
         ):
             cl_good[cl] = True
@@ -146,7 +146,7 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
             net: bd.CN_AE = bd.CN_AE().to(device)
             net.load_state_dict(torch.load(params["model_path"]))
             net.eval()
-            spk_data: bd.SpikeDataset = bd.SpikeDataset(spk_snips, cl_ids, ToTensor())
+            spk_data: bd.SpikeDataset = bd.SpikeDataset(spk_snips, cl_ids)
 
         # Calculate similarity using distances in the autoencoder latent space.
         spk_lat_peak: NDArray[np.float_]

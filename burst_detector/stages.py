@@ -144,7 +144,7 @@ def calc_ae_sim(
     # init dataloader, latent arrays
     dl = DataLoader(spk_data, batch_size=128)
     spk_lat: NDArray[np.float_] = np.zeros((len(spk_data), zDim))
-    spk_lab: NDArray[np.int_] = np.zeros(len(spk_data), dtype="np.int_")
+    spk_lab: NDArray[np.int_] = np.zeros(len(spk_data), dtype="int32")
     loss_fn = nn.MSELoss()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -585,8 +585,8 @@ def ref_p_func(
     import burst_detector as bd
 
     # Extract spike times.
-    c1_times = times_multi[c1] / params["fs]"]
-    c2_times = times_multi[c2] / params["fs]"]
+    c1_times = times_multi[c1] / params["fs"]
+    c2_times = times_multi[c2] / params["fs"]
 
     # Calculate cross-correlogram.
     ccg = bd.x_correlogram(
@@ -603,9 +603,10 @@ def ref_p_func(
     ccg = ccg[half_len:]
 
     # Only test a few refractory period sizes.
-    b = np.arange(0, 10.5, params["ref_pen_bin_width"]) / 1000
-    bTestIdx = np.array([1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20])
-    bTest = [b[i] for i in bTestIdx]
+    bTestIdx = np.array([1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20])
+    bTest = bTestIdx * params["ref_pen_bin_width"] / 1000
+    bTestIdx = bTestIdx[bTest <= 0.01]  # 10 ms is the hardcoded max refractory period
+    bTest = bTest[bTest <= 0.01]
 
     ccg_cumsum = np.cumsum(ccg)
     sum_res = ccg_cumsum[bTestIdx - 1]  # -1 bc first bin is 0-bin_size
@@ -623,8 +624,14 @@ def ref_p_func(
     )
 
     # Compute confidence of less than thresh contamination at each refractory period.
+    # confs = np.zeros(sum_res.shape[0])
+    # for j, cnt in enumerate(sum_res):
+    #     confs[j] = 1 - poisson.cdf(cnt, max_contam[j])
     confs = np.zeros(sum_res.shape[0])
     for j, cnt in enumerate(sum_res):
-        confs[j] = 1 - poisson.cdf(cnt, max_contam[j])
+        if max_contam[j] > 3:
+            confs[j] = 1 - poisson.cdf(cnt, max_contam[j])
+        else:
+            confs[j] = max(1 - cnt / max_contam[j], 1 - poisson.cdf(cnt, max_contam[j]))
 
     return 1 - confs.max(), bTest[confs.argmax()]

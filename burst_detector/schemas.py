@@ -1,4 +1,6 @@
+from lib2to3.fixes.fix_has_key import FixHasKey
 from pydoc import cli
+from urllib import request
 
 from argschema import ArgSchema, ArgSchemaParser
 from argschema.fields import (
@@ -14,6 +16,8 @@ from argschema.fields import (
     String,
 )
 from argschema.schemas import DefaultSchema
+from pandas import describe_option
+from traitlets import default
 
 
 class AutoMergeParams(ArgSchema):
@@ -110,17 +114,22 @@ class AutoMergeParams(ArgSchema):
     )
     min_xcorr_rate = Float(
         required=False,
-        default=800,
+        default=1200,
         description="Spike count threshold (per second) for cross correlograms. Cluster pairs whose cross correlogram spike rate is lower than the threshold will have a penalty applied to their cross correlation metric",
     )
 
     # xcorr_ref_p = Float(required=False, default=0.001, description="Length of refractory period in seconds")
-    ref_pers = List(
-        Float,
+    # ref_pers = List(
+    #     Float,
+    #     required=False,
+    #     cli_as_single_argument=True,
+    #     default=[0.001, 0.002, 0.004],
+    #     description="List of potential refractory period lengths (in s)",
+    # )
+    ref_pen_bin_width = Float(
         required=False,
-        cli_as_single_argument=True,
-        default=[0.001, 0.002, 0.004],
-        description="List of potential refractory period lengths (in s)",
+        default=1,
+        description="For refractory period penalty, bin width IN MS of cross correlogram, also affects refractory periods",
     )
     max_viol = Float(
         required=False,
@@ -171,12 +180,12 @@ class AutoMergeParams(ArgSchema):
     )
     ae_shft = Bool(
         required=False,
-        default=True,
+        default=False,
         description="For autoencoder training, True if autoencoder should be trained on time-shifted snippets",
     )
     ae_epochs = Int(
         required=False,
-        default=5,
+        default=25,
         description="Number of epochs to train autoencoder for",
     )
     spikes_path = InputDir(
