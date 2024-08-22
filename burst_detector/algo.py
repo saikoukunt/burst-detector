@@ -31,6 +31,8 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     channel_pos: NDArray[np.float_] = np.load(
         os.path.join(params["KS_folder"], "channel_positions.npy")
     )
+    if "group" not in cl_labels.columns:
+        cl_labels["group"] = cl_labels["KSLabel"]
 
     # Compute useful cluster info.
     n_clust = clusters.max() + 1
@@ -53,7 +55,7 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     cl_good[good_ids] = True
 
     mean_wf, std_wf, spikes = bd.calc_mean_and_std_wf(
-        params, n_clust, good_ids, times_multi, data
+        params, n_clust, good_ids, times_multi, data, return_spikes=True
     )
 
     peak_chans = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf, 2), 1)
@@ -82,14 +84,16 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
             "num_chan": params["ae_chan"],
             "for_shft": params["ae_shft"],
         }
-        spk_snips: torch.Tensor
-        cl_ids: NDArray[np.int_]
         spk_snips, cl_ids = bd.generate_train_data(
             data, ci, channel_pos, ext_params, params
         )
-
         # Train the autoencoder if needed.
-        if params["model_path"] == None:
+        model_path = (
+            params["model_path"]
+            if params["model_path"]
+            else os.path.join(params["KS_folder"], "automerge", "ae.pt")
+        )
+        if not os.path.exists(model_path):
             print("Training autoencoder...")
             net, spk_data = bd.train_ae(
                 spk_snips,
@@ -99,16 +103,13 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
             )
             torch.save(
                 net.state_dict(),
-                os.path.join(params["KS_folder"], "automerge", "ae.pt"),
+                model_path,
             )
-            print(
-                "Autoencoder saved in "
-                + str(os.path.join(params["KS_folder"], "automerge", "ae.pt"))
-            )
+            print(f"Autoencoder saved in {model_path}")
         else:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             net: bd.CN_AE = bd.CN_AE().to(device)
-            net.load_state_dict(torch.load(params["model_path"]))
+            net.load_state_dict(torch.load(model_path))
             net.eval()
             spk_data: bd.SpikeDataset = bd.SpikeDataset(spk_snips, cl_ids)
 
@@ -200,6 +201,7 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
         file.write(json.dumps(new2old, separators=(",\n", ":")))
 
     merges: list[list[int]] = list(new2old.values())
+
     bd.plot_merges(merges, times_multi, mean_wf, std_wf, spikes, params)
 
     t7: float = time.time()
