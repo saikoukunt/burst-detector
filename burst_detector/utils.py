@@ -9,7 +9,6 @@ from typing import Any
 
 import cupy as cp
 import cupyx as cpx
-
 import numpy as np
 from numpy.typing import NDArray
 from tqdm import tqdm
