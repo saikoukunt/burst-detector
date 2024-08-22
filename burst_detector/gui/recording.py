@@ -1,70 +1,94 @@
+import json
+import os
+
 import numpy as np
 import pandas as pd
-import burst_detector as bd
-import os
-import json
 from argschema import ArgSchemaParser
+
+import burst_detector as bd
+
 
 class Recording(object):
 
     def __init__(self, filename):
         self.ks_dir = os.path.dirname(filename)
-        
+
         # parse JSON?
         try:
-            json_file  = open(os.path.join(self.ks_dir, "input.json"))
+            json_file = open(os.path.join(self.ks_dir, "input.json"))
             self.params = json.load(json_file)
         except FileNotFoundError:
             print("No JSON found, using default SpECtr parameters!")
             self.params = {}
 
-        self.params = ArgSchemaParser(input_data=self.params, schema_type=bd.schemas.AutomergeGUIParams).args
+        self.params = ArgSchemaParser(
+            input_data=self.params, schema_type=bd.schemas.AutomergeGUIParams
+        ).args
 
         print(self.params)
 
-        with open(filename, 'r') as param_file:
+        with open(filename, "r") as param_file:
             for line in param_file:
-                elem = line.split(sep='=')
+                elem = line.split(sep="=")
                 self.params[elem[0].strip()] = eval(elem[1].strip())
 
         self.spikes = {}
         self._load_recording()
 
-
     def _load_recording(self):
         # load required files (times, clusters, channel_pos, labels, spike_templates, similar_templates)
-        self.sp_times = np.load(os.path.join(self.ks_dir, 'spike_times.npy')).flatten()
+        self.sp_times = np.load(os.path.join(self.ks_dir, "spike_times.npy")).flatten()
         try:
-            self.clusters = np.load(os.path.join(self.ks_dir, 'spike_clusters.npy')).flatten() 
+            self.clusters = np.load(
+                os.path.join(self.ks_dir, "spike_clusters.npy")
+            ).flatten()
         except FileNotFoundError:
-            self.clusters = np.load(os.path.join(self.ks_dir, 'spike_templates.npy')).flatten() 
-        self.cl_labels = pd.read_csv(os.path.join(self.ks_dir, 'cluster_group.tsv'), sep="\t")
+            self.clusters = np.load(
+                os.path.join(self.ks_dir, "spike_templates.npy")
+            ).flatten()
+        self.cl_labels = pd.read_csv(
+            os.path.join(self.ks_dir, "cluster_group.tsv"), sep="\t"
+        )
         self.channel_pos = np.load(os.path.join(self.ks_dir, "channel_positions.npy"))
-        self.spike_templates = np.load(os.path.join(self.ks_dir, 'spike_templates.npy')).flatten() 
-        self.similar_templates = np.load(os.path.join(self.ks_dir, 'similar_templates.npy'))
+        self.spike_templates = np.load(
+            os.path.join(self.ks_dir, "spike_templates.npy")
+        ).flatten()
+        self.similar_templates = np.load(
+            os.path.join(self.ks_dir, "similar_templates.npy")
+        )
         self.n_templates = self.similar_templates.shape[0]
 
         # load data
-        self.rawData = np.memmap(os.path.join(self.ks_dir, self.params['dat_path']), dtype=self.params['dtype'], mode='r')
-        self.data = np.reshape(self.rawData, (int(self.rawData.size/self.params['n_channels_dat']), self.params['n_channels_dat']))
+        self.rawData = np.memmap(
+            os.path.join(self.ks_dir, self.params["dat_path"]),
+            dtype=self.params["dtype"],
+            mode="r",
+        )
+        self.data = np.reshape(
+            self.rawData,
+            (
+                int(self.rawData.size / self.params["n_channels_dat"]),
+                self.params["n_channels_dat"],
+            ),
+        )
 
         # calculate things
         self.n_clust = self.clusters.max() + 1
         self.counts = bd.spikes_per_cluster(self.clusters)
-        self.cl_times, self.cl_inds = bd.find_times_multi(self.sp_times, self.clusters, np.arange(self.n_clust), return_inds=True)
+        self.cl_times = bd.find_times_multi(
+            self.sp_times, self.clusters, np.arange(self.n_clust), return_inds=True
+        )
+        self.cl_inds = np.unique(self.clusters)
         self.cl_templates = {}
         self._calc_temp_counts()
 
         # try loading mean_wf
-        try:
-            self.mean_wf = np.load(os.path.join(self.ks_dir, 'mean_waveforms.npy'))
-            # self.std_wf = np.load(os.path.join(self.ks_dir, 'std_waveforms.npy'))
-
-        except OSError: #TODO: change this to calculating and saving means, std
-            self.mean_wf = self._calc_mean_wf()
-            # self.mean_wf = np.zeros((self.n_clust, self.params['n_channels_dat'], self.params['pre_samples']+self.params['post_samples']))
-            # self.std_wf = np.zeros((self.n_clust, self.params['n_channels_dat'], self.params['pre_samples']+self.params['post_samples']))
-        self.peak_chans = np.argmax(np.max(self.mean_wf, 2) - np.min(self.mean_wf,2),1)
+        self.mean_wf, _, _ = bd.calc_mean_and_std_wf(
+            self.params, self.n_clust, self.cl_inds, self.cl_times, self.data
+        )
+        self.peak_chans = np.argmax(
+            np.max(self.mean_wf, 2) - np.min(self.mean_wf, 2), 1
+        )
 
         # arrays for similarities
         self.cl_temp_sim = -1 * np.ones((self.n_clust, self.n_clust))
@@ -75,59 +99,48 @@ class Recording(object):
 
         print("Loaded KS output from %s" % self.ks_dir)
 
-    def _calc_mean_wf(self):
-        print("mean_waveforms.npy not found, calculating mean waveforms on the fly...")
-        mean_wf = np.zeros(
-            (self.n_clust,
-            self.params['n_channels_dat'],
-            self.params['pre_samples'] + self.params['post_samples'])
-        )
-
-        unique = np.unique(self.clusters)
-        for i in range(self.n_clust):
-            print("\r" + str(i) + "/" + str(self.clusters.max()), end="")
-            if (i in unique) and (self.counts[i] > 0):
-                self.spikes[i] = bd.extract_spikes(
-                    self.data, self.cl_times, self.clusters, i, n_chan=self.params['n_channels_dat'], 
-                    pre_samples = self.params['pre_samples'],
-                    post_samples = self.params['post_samples'],
-                    max_spikes = self.params['max_spikes']
-                )
-                mean_wf[i,:,:] = np.nanmean(self.spikes[i], axis=0)
-
-        np.save(os.path.join(self.ks_dir, 'mean_waveforms.npy'), mean_wf)
-
-        return mean_wf
-
     def _load_cluster_metrics(self):
         metrics = pd.DataFrame()
 
-        seps = {".csv": ',', ".tsv": '\t'}
+        seps = {".csv": ",", ".tsv": "\t"}
         exclude = ["waveform_metrics", "metrics"]
 
         for file in os.listdir(self.ks_dir):
-            if (file.endswith(".csv") or file.endswith(".tsv")) and (file[:-4] not in exclude):
+            if (file.endswith(".csv") or file.endswith(".tsv")) and (
+                file[:-4] not in exclude
+            ):
                 df = pd.read_csv(os.path.join(self.ks_dir, file), sep=seps[file[-4:]])
 
-                if 'cluster_id' in df.columns:
+                if "cluster_id" in df.columns:
                     new_feat = [col for col in df.columns if col not in metrics.columns]
-                    metrics = df if metrics.empty else pd.merge(metrics, df[['cluster_id']+ new_feat], on='cluster_id', how='outer') 
+                    metrics = (
+                        df
+                        if metrics.empty
+                        else pd.merge(
+                            metrics,
+                            df[["cluster_id"] + new_feat],
+                            on="cluster_id",
+                            how="outer",
+                        )
+                    )
 
         for key in self.counts:
-            metrics.loc[metrics['cluster_id'] == key, 'n_spikes'] = int(self.counts[key])
+            metrics.loc[metrics["cluster_id"] == key, "n_spikes"] = int(
+                self.counts[key]
+            )
 
-        metrics['cur_label'] = ""
+        metrics["cur_label"] = ""
 
-        cols = ['cluster_id', 'ch', 'sh', 'n_spikes', 'cur_label', "KSLabel"]
+        cols = ["cluster_id", "ch", "sh", "n_spikes", "cur_label", "KSLabel"]
         metrics = metrics[cols + [c for c in metrics.columns if c not in cols]]
-        metrics['ch'] = self.peak_chans[metrics['cluster_id'].astype('int')]
+        metrics["ch"] = self.peak_chans[metrics["cluster_id"].astype("int")]
 
         # Copy KSLabel to group if group.tsv doesn't exist
-        if 'group' not in metrics.columns:
-            metrics['group'] = metrics['KSLabel']
+        if "group" not in metrics.columns:
+            metrics["group"] = metrics["KSLabel"]
 
         return metrics
-    
+
     def _calc_temp_counts(self):
         for i in range(self.n_clust):
             if i in self.counts:
@@ -149,21 +162,25 @@ class Recording(object):
         if self.cl_temp_sim[clust_id, 0] != -1:
             return self.cl_temp_sim[clust_id, :]
 
-        sims = np.max(self.similar_templates[self.cl_templates[clust_id], :], axis=0) # max similarity of cluster to each template
+        sims = np.max(
+            self.similar_templates[self.cl_templates[clust_id], :], axis=0
+        )  # max similarity of cluster to each template
 
         def _sim_ij(cj):
             if cj not in self.counts:
                 return 0
             if cj < self.n_templates:
                 return sims[cj]
-            return np.max(sims[self.cl_templates[cj]]) # max similarity between all pairs of templates 
+            return np.max(
+                sims[self.cl_templates[cj]]
+            )  # max similarity between all pairs of templates
 
         for j in range(self.n_clust):
             self.cl_temp_sim[clust_id, j] = _sim_ij(j)
 
         self.cl_temp_sim[clust_id, :] = np.nan_to_num(self.cl_temp_sim[clust_id, :])
 
-        self.cl_temp_sim[clust_id, self.cl_temp_sim[clust_id, :]  < 0.001] = 0
+        self.cl_temp_sim[clust_id, self.cl_temp_sim[clust_id, :] < 0.001] = 0
 
         return self.cl_temp_sim[clust_id, :]
 
@@ -181,13 +198,13 @@ class Recording(object):
         temp = self.cl_times[cl_list[0]]
         for i in range(1, len(cl_list)):
             temp = np.concatenate((temp, self.cl_times[cl_list[i]]), axis=0)
-        self.cl_times.append(temp)       # test if this works in a notebook
+        self.cl_times.append(temp)  # test if this works in a notebook
 
         # update cl_inds
         temp = self.cl_inds[cl_list[0]]
         for i in range(1, len(cl_list)):
             temp = np.concatenate((temp, self.cl_inds[cl_list[i]]), axis=0)
-        self.cl_inds.append(temp)       # test if this works in a notebook
+        self.cl_inds.append(temp)  # test if this works in a notebook
 
         # cl_templates
         temp = list(self.cl_templates[cl_list[0]])
@@ -199,7 +216,6 @@ class Recording(object):
         # print(self.cl_templates)
         print(self.cl_templates[new_id])
 
-
         # spikes
         temp = self.spikes[cl_list[0]]
         for i in range(1, len(cl_list)):
@@ -207,34 +223,32 @@ class Recording(object):
         self.spikes[new_id] = temp
 
         # mean_wf
-        temp = self.counts[cl_list]/sum(self.counts[cl_list]) * self.mean_wf[cl_list]
+        temp = self.counts[cl_list] / sum(self.counts[cl_list]) * self.mean_wf[cl_list]
         self.mean_wf = np.concatenate((self.mean_wf, temp), axis=0)
 
         # expand sim arrays
-        temp = -1*np.ones((1,self.n_clust-1))
+        temp = -1 * np.ones((1, self.n_clust - 1))
         self.cl_temp_sim = np.concatenate((self.cl_temp_sim, temp), axis=0)
         self.cl_ae_sim = np.concatenate((self.cl_ae_sim, temp), axis=0)
 
-        temp = -1*np.ones((self.n_clust, 1))
+        temp = -1 * np.ones((self.n_clust, 1))
         self.cl_temp_sim = np.concatenate((self.cl_temp_sim, temp), axis=1)
         self.cl_ae_sim = np.concatenate((self.cl_ae_sim, temp), axis=1)
 
         return new_id
-    
+
     def load_spikes(self, cl):
         if cl in self.spikes:
             return
-        self.spikes[cl] = bd.extract_spikes(self.data, self.cl_times, self.clusters, cl, n_chan=self.params['n_channels_dat'], max_spikes=500)
+        self.spikes[cl] = bd.extract_spikes(
+            self.data,
+            self.cl_times,
+            self.clusters,
+            cl,
+            n_chan=self.params["n_channels_dat"],
+            max_spikes=500,
+        )
 
         # if self.calc_means:
         #     self.mean_wf[cl] = np.nanmean(self.spikes[cl], axis=0)
         #     self.std_wf[cl] = np.nanstd(self.spikes[cl], axis=0)
-
-
-        
-
-
-
-
-
-

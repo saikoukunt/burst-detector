@@ -4,8 +4,14 @@ General utilities for ephys data-wrangling.
 Assumes that ephys data is stored in the phy output format.
 """
 
+import os
+from typing import Any
+
+import cupy as cp
+import cupyx as cpx
 import numpy as np
 from numpy.typing import NDArray
+from tqdm import tqdm
 
 
 def find_times_multi(
@@ -38,7 +44,7 @@ def find_times_multi(
     return cl_times
 
 
-def spikes_per_cluster(sp_clust: NDArray[np.int_]) -> dict[int, int]:
+def spikes_per_cluster(sp_clust: NDArray[np.int_]) -> NDArray[np.int_]:
     """
     Counts the number of spikes in each cluster.
 
@@ -46,16 +52,14 @@ def spikes_per_cluster(sp_clust: NDArray[np.int_]) -> dict[int, int]:
         - `sp_clust` (nd.array): Spike cluster assignments.
 
     ### Returns
-        - `spikes_per_cluster` (dict): Number of spikes per cluster, indexed by
-            cluster id.
+        - `counts_array` (NDArray): Number of spikes per cluster, indexed by
+            cluster id. Shape is (max_cluster_id + 1,).
 
     """
-    ids: NDArray[np.int_]
-    counts: NDArray[np.int_]
-    ids, counts = np.unique(sp_clust, return_counts=True)  # type: ignore
-    spikes_per_cluster = dict(zip(ids, counts))
-
-    return spikes_per_cluster
+    ids, counts = np.unique(sp_clust, return_counts=True)
+    counts_array = np.zeros(ids.max() + 1, dtype=int)
+    counts_array[ids] = counts
+    return counts_array
 
 
 def extract_spikes(
@@ -91,7 +95,7 @@ def extract_spikes(
         - `spikes` (np.ndarray): Array of extracted spike waveforms with shape
             (# of spikes, # of channels, # of timepoints).
     """
-    times: NDArray[np.int_] = times_multi[clust_id].astype("int64")
+    times = times_multi[clust_id].astype("int64")
 
     # Ignore spikes that are cut off by the ends of the recording
     while (times[0] - pre_samples) < 0:
@@ -111,6 +115,87 @@ def extract_spikes(
         spikes[i, :, :] = data[times[i] - pre_samples : times[i] + post_samples, :].T
 
     return spikes
+
+
+def calc_mean_and_std_wf(
+    params: dict[str, Any],
+    n_clusters: int,
+    cluster_ids: list[int],
+    spike_times: list[NDArray[np.int_]],
+    data: NDArray[np.int_],
+    return_spikes: bool = False,
+) -> NDArray:
+    """
+    Calculate mean waveform and std waveform for each cluster. Need to have loaded some metrics. If return_spikes is True, also returns the spike waveforms.
+    Use GPU acceleration with cupy.
+
+    Args:
+        params (dict): Parameters for the recording.
+        n_clusters (int): Number of clusters in the recording. Equal to the maximum cluster id + 1.
+        cluster_ids (list): List of cluster ids to calculate waveforms for.
+        spike_times (list): List of spike times indexed by cluster id.
+        data (NDArray): Ephys data with shape (n_timepoints, n_channels).
+        return_spikes (bool): Whether to return the spike waveforms. Defaults to False.
+
+    Returns:
+        NDArray: Mean waveforms for each cluster. Shape (n_clusters, n_channels, pre_samples + post_samples)
+        NDArray: Std waveforms for each cluster. Shape (n_clusters, n_channels, pre_samples + post_samples)
+        dict[int, NDArray]: Spike waveforms for each cluster. NDArray shape (n_spikes, n_channels, pre_samples + post_samples)
+    """
+    mean_wf_path = os.path.join(params["KS_folder"], "mean_waveforms.npy")
+    std_wf_path = os.path.join(params["KS_folder"], "std_waveforms.npy")
+
+    try:
+        mean_wf = np.load(mean_wf_path)
+        std_wf = np.load(std_wf_path)
+        spikes = None
+        if return_spikes:
+            spikes = {}
+            # Extracting spikes is faster than saving and loading them from file
+            for i in tqdm(cluster_ids, desc="Loading spikes"):
+                spikes_i = extract_spikes(
+                    data,
+                    spike_times,
+                    i,
+                    params["pre_samples"],
+                    params["post_samples"],
+                    params["n_chan"],
+                    params["max_spikes"],
+                )
+                spikes[i] = spikes_i
+    except FileNotFoundError and OSError:
+        mean_wf = cpx.zeros_pinned(
+            (
+                n_clusters,
+                params["n_chan"],
+                params["pre_samples"] + params["post_samples"],
+            )
+        )
+        std_wf = cpx.zeros_like_pinned(mean_wf)
+        spikes = {}
+        for i in tqdm(cluster_ids, desc="Calculating mean and std waveforms"):
+            spikes_i = extract_spikes(
+                data,
+                spike_times,
+                i,
+                params["pre_samples"],
+                params["post_samples"],
+                params["n_chan"],
+                params["max_spikes"],
+            )
+            spikes_cp = cp.asarray(spikes_i)
+            mean_wf[i, :, :] = cp.mean(spikes_cp, axis=0)
+            std_wf[i, :, :] = cp.std(spikes_cp, axis=0)
+            spikes[i] = spikes_i
+
+        print("Saving mean and std waveforms...")
+        cp.save(mean_wf_path, mean_wf)
+        cp.save(std_wf_path, std_wf)
+
+        # convert to numpy
+        mean_wf = cp.asnumpy(mean_wf)
+        std_wf = cp.asnumpy(std_wf)
+    return mean_wf, std_wf, spikes
 
 
 ### @internal
