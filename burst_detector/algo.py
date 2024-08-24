@@ -14,6 +14,9 @@ import burst_detector as bd
 
 
 def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
+    if not torch.cuda.is_available():
+        print("CUDA not available, running on CPU.")
+
     os.makedirs(os.path.join(params["KS_folder"], "automerge"), exist_ok=True)
     os.makedirs(os.path.join(params["KS_folder"], "automerge", "merges"), exist_ok=True)
 
@@ -28,6 +31,8 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     cl_labels: pd.DataFrame = pd.read_csv(
         os.path.join(params["KS_folder"], "cluster_group.tsv"), sep="\t"
     )
+    cl_labels.set_index("cluster_id", inplace=True)
+
     channel_pos: NDArray[np.float_] = np.load(
         os.path.join(params["KS_folder"], "channel_positions.npy")
     )
@@ -35,22 +40,30 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
         cl_labels["group"] = cl_labels["KSLabel"]
 
     # Compute useful cluster info.
-    n_clust = clusters.max() + 1
-    counts = bd.spikes_per_cluster(clusters)
-    times_multi = bd.find_times_multi(times, clusters, np.arange(clusters.max() + 1))
-
     # Load the ephys recording.
     rawData = np.memmap(params["data_filepath"], dtype=params["dtype"], mode="r")
     data: NDArray[np.int16] = np.reshape(
         rawData, (int(rawData.size / params["n_chan"]), params["n_chan"])
     )
 
-    # Mark units that we don't want to consider.
-    good_ids = cl_labels.loc[
-        cl_labels["group"].isin(params["good_lbls"]), "cluster_id"
-    ].values
-    min_spike_ids = np.where(counts > params["min_spikes"])[0]
-    good_ids = np.intersect1d(good_ids, min_spike_ids)
+    n_clust = clusters.max() + 1
+    counts = bd.spikes_per_cluster(clusters, params["max_spikes"])
+    times_multi = bd.find_times_multi(
+        times,
+        clusters,
+        np.arange(n_clust),
+        params["max_spikes"],
+        data,
+        params["pre_samples"],
+        params["post_samples"],
+    )
+
+    # update group to noise if counts < min_spikes
+    cl_labels.loc[counts < params["min_spikes"], "group"] = "noise"
+
+    # Get cluster_ids labeled good
+    good_ids = cl_labels[cl_labels["group"].isin(params["good_lbls"])].index
+
     cl_good = np.zeros(n_clust, dtype=bool)
     cl_good[good_ids] = True
 
@@ -67,13 +80,11 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
 
     # Autoencoder-based similarity calculation.
     if params["sim_type"] == "ae":
-        print("Extracting spike snippets to train autoencoder...")
         spk_fld: str = os.path.join(params["KS_folder"], "automerge", "spikes")
         ci: dict[str, Any] = {
-            "times": times,
             "times_multi": times_multi,
-            "clusters": clusters,
             "counts": counts,
+            "good_ids": good_ids,
             "labels": cl_labels,
             "mean_wf": mean_wf,
         }
@@ -114,10 +125,7 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
             spk_data: bd.SpikeDataset = bd.SpikeDataset(spk_snips, cl_ids)
 
         # Calculate similarity using distances in the autoencoder latent space.
-        spk_lat_peak: NDArray[np.float_]
-        lat_mean: NDArray[np.float_]
-        spk_lab: NDArray[np.int_]
-        sim, spk_lat_peak, lat_mean, spk_lab = bd.calc_ae_sim(
+        sim, _, _, _ = bd.calc_ae_sim(
             mean_wf, net, peak_chans, spk_data, cl_good, do_shft=params["ae_shft"]
         )
         pass_ms = sim > params["sim_thresh"]

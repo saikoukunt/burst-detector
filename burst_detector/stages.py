@@ -16,6 +16,7 @@ from numpy.typing import NDArray
 from scipy.stats import wasserstein_distance
 from sklearn.neighbors import NearestNeighbors
 from torch.utils.data import DataLoader, Dataset, Subset
+from tqdm import tqdm
 
 import burst_detector as bd
 
@@ -24,7 +25,7 @@ def calc_mean_sim(
     data: NDArray[np.int_],
     times: list[NDArray[np.float_]],
     clusters: NDArray[np.int_],
-    counts: dict[int, int],
+    counts: NDArray[np.int_],
     n_clust: int,
     labels: pd.DataFrame,
     mean_wf: NDArray[np.float_],
@@ -44,7 +45,7 @@ def calc_mean_sim(
             Should be passed in as an np.memmap for large datasets.
         - `times` (np.ndarray): Spike times (in any unit of time).
         - `clusters` (np.ndarray): Spike cluster assignments.
-        - `counts` (dict): Number of spikes per cluster, indexed by cluster id.
+        - `counts` (NDArray): Number of spikes per cluster.
         - `n_clust` (int): The number of clusters, taken to be the largest cluster id + 1.
         - `labels` (pd.Dataframe): Cluster quality labels.
         - `mean_wf` (np.ndarray): Cluster mean waveforms with shape (# of clusters,
@@ -84,18 +85,17 @@ def calc_mean_sim(
     pass_ms: NDArray[np.bool_] = np.zeros_like(mean_sim, dtype="bool")
     for c1 in range(n_clust):
         for c2 in range(c1 + 1, n_clust):
-            if (c1 in counts) and (c2 in counts):
-                if mean_sim[c1, c2] >= params["sim_thresh"] and (
-                    (counts[c1] >= params["sp_num_thresh"])
-                    and (counts[c2] >= params["sp_num_thresh"])
+            if mean_sim[c1, c2] >= params["sim_thresh"] and (
+                (counts[c1] >= params["sp_num_thresh"])
+                and (counts[c2] >= params["sp_num_thresh"])
+            ):
+                if (
+                    labels.loc[labels["cluster_id"] == c1, "group"].item() == "good"
+                ) and (
+                    labels.loc[labels["cluster_id"] == c2, "group"].item() == "good"
                 ):
-                    if (
-                        labels.loc[labels["cluster_id"] == c1, "group"].item() == "good"
-                    ) and (
-                        labels.loc[labels["cluster_id"] == c2, "group"].item() == "good"
-                    ):
-                        pass_ms[c1, c2] = True
-                        pass_ms[c2, c1] = True
+                    pass_ms[c1, c2] = True
+                    pass_ms[c2, c1] = True
 
     return mean_sim, offset, wf_norms, mean_wf, pass_ms
 
@@ -115,105 +115,97 @@ def calc_ae_sim(
     """
     Calculates autoencoder-based cluster similarity.
 
-    ### Args:
-        - `mean_wf`(np.ndarray): Cluster mean waveforms with shape (# of clusters, #
+    Args:
+        mean_wf (NDArray): Cluster mean waveforms with shape (# of clusters, #
             channels, # timepoints).
-        - `model` (nn.Module): Pre-trained autoencoder in eval mode and moved to GPU if
+        model (nn.Module): Pre-trained autoencoder in eval mode and moved to GPU if
             available.
-        - `peak_chans` (np.ndarray): Peak channel for each cluster.
-        - `spk_data` (SpikeDataset): Dataset containing snippets used for
+        peak_chans (NDArray): Peak channel for each cluster.
+        spk_data (SpikeDataset): Dataset containing snippets used for
             cluster comparison.
-        - `cl_good` (np.ndarray): Cluster quality labels.
-        - `do_shft` (bool): True if model and spk_data are for an autoencoder explicitly
+        cl_good (NDArray): Cluster quality labels.
+        do_shft (bool): True if model and spk_data are for an autoencoder explicitly
             trained on time-shifted snippets.
-        - `zDim` (int): Latent dimensionality of CN_AE. Defaults to 15.
-        - `sf` (float): Scaling factor for peak channels appended to latent vector. This
+        zDim (int): Latent dimensionality of CN_AE. Defaults to 15.
+        sf (float): Scaling factor for peak channels appended to latent vector. This
             does not affect the similarity calculation, only the returned `spk_lat_peak`
             array.
 
-    ### Returns:
-        - `ae_sim` (np.ndarray): Pairwise autoencoder-based similarity. ae_sim[i,j] = 1
+    Returns:
+        ae_sim (NDArray): Pairwise autoencoder-based similarity. ae_sim[i,j] = 1
             indicates maximal similarity.
-        - `spk_lat_peak` (np.ndarray): hstack(latent vector, cluster peak channel) for
+        spk_lat_peak (NDArray): hstack(latent vector, cluster peak channel) for
             each spike snippet in spk_data.
-        - `lat_mean` (np.ndarray): Centroid hstack(latent vector, peak channel) for each
+        lat_mean (NDArray): Centroid hstack(latent vector, peak channel) for each
             cluster in spk_data.
-        - `spk_lab` (np.ndarray): Cluster ids for each snippet in spk_data.
+        spk_lab (NDArray): Cluster ids for each snippet in spk_data.
     """
 
     # init dataloader, latent arrays
-    dl = DataLoader(spk_data, batch_size=128)
-    spk_lat: NDArray[np.float_] = np.zeros((len(spk_data), zDim))
-    spk_lab: NDArray[np.int_] = np.zeros(len(spk_data), dtype="int32")
-    loss_fn = nn.MSELoss()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dl = DataLoader(spk_data, batch_size=128)
+    spk_lat = np.zeros((len(spk_data), zDim))
+    spk_lab = np.zeros(len(spk_data), dtype="int32")
+    loss_fn = nn.MSELoss()
 
-    loss = 0
-
-    print("Calculating latent features...")
     # calculate latent representations of spikes
+    loss = 0
     with torch.no_grad():
-        for idx, data in enumerate(dl, 0):
-            print("\rBatch " + str(idx + 1) + "/" + str(len(dl)), end="")
-            spks, lab = data
+        for spks, lab in tqdm(dl, desc="Calculating latent representations"):
+            spks, lab = spks.to(device), lab.to(device)
             if do_shft:
-                targ = spks[:, :, :, 5:-5].clone().to(device)
-                spks = spks[:, :, :, 5:-5].clone().to(device)
-            else:
-                targ = spks.to(device)
-                spks = spks.to(device)
+                spks = spks[:, :, :, 5:-5]
+            targ = spks.clone()
 
             rec = model(spks)
-            loss += loss_fn(targ, rec)
+            loss += loss_fn(targ, rec).item()
 
-            out = (
-                model.encoder(spks) if (not do_shft) else model.encoder(rec)
+            out = model.encoder(
+                spks if not do_shft else rec
             )  # does this need to be (net.encoder(net(spks)) for time-shift?
-            spk_lat[128 * idx : (idx + 1) * 128, :] = out.cpu().detach().numpy()
-            spk_lab[128 * idx : (idx + 1) * 128] = lab.cpu().detach().numpy()
+            start_idx = len(spk_lat) * len(dl) // len(spk_data)
+            end_idx = start_idx + len(spks)
+            spk_lat[start_idx:end_idx] = out.cpu().detach().numpy()
+            spk_lab[start_idx:end_idx] = lab.cpu().detach().numpy()
 
-    print("\nLOSS: " + str(loss / len(dl)))
+    print(f"Average Loss: {loss/len(dl):.4f}")
 
     # construct dataframes with peak channel
-    ae_df = pd.DataFrame({"cl": spk_lab})
+    ae_df = pd.DataFrame({"cluster_id": spk_lab})
     for i in range(ae_df.shape[0]):
         ae_df.loc[i, "peak"] = peak_chans[
-            int(ae_df.loc[i, "cl"])  # type: ignore
-        ]  # chans[ae_df.loc[i, 'cl']][0]
-    spk_lat_peak: NDArray[np.float_] = np.hstack(
-        (spk_lat, sf * np.expand_dims(np.array(ae_df["peak"]), 1))
-    )
+            int(ae_df.loc[i, "cluster_id"])  # type: ignore
+        ]
+    spk_lat_peak = np.hstack((spk_lat, sf * np.expand_dims(np.array(ae_df["peak"]), 1)))
+
+    lat_df = pd.DataFrame(spk_lat_peak)
+    lat_df["cluster_id"] = ae_df["cluster_id"]
+    lat_df = lat_df.query("cluster_id != -1")  # exclude noise
 
     # calculate cluster centroids
-    lat_df = pd.DataFrame(spk_lat_peak)
-    lat_df["cl"] = ae_df["cl"]
-    lat_df = lat_df.loc[lat_df["cl"] != -1]  # exclude noise
     lat_mean = np.zeros((mean_wf.shape[0], zDim + 1))
-    for group in lat_df.groupby("cl"):
-        lat_mean[int(group[0]), :] = group[1].iloc[:, : zDim + 1].mean(axis=0)  # type: ignore
+    for cluster_id, group_df in lat_df.groupby("cluster_id"):
+        lat_mean[int(cluster_id), :] = group_df.iloc[:, group_df.columns != "cluster_id"].mean(axis=0)  # type: ignore
 
     # calculate nearest neighbors, pairwise distances for cluster centroids
-    neigh = NearestNeighbors(n_neighbors=5, metric="euclidean").fit(lat_mean[:, :15])
-    dists, neighbors = neigh.kneighbors(lat_mean[:, :zDim], return_distance=True)
+    neigh = NearestNeighbors(n_neighbors=5, metric="euclidean").fit(lat_mean[:, :zDim])
+    dists, _ = neigh.kneighbors(lat_mean[:, :zDim], return_distance=True)
     ae_dist = dist.squareform(dist.pdist(lat_mean[:, :zDim], "euclidean"))
 
     # similarity threshold for further analysis -- mean + std of distance to 1st NN
     ref_dist = dists[dists[:, 1] != 0, 1].mean() + dists[dists[:, 1] != 0, 1].std()
 
     # calculate similarity -- ref_dist is scaled to 0.6 similarity
-    ae_sim: NDArray[np.float_] = np.exp(-0.5 * ae_dist / ref_dist)
+    ae_sim = np.exp(-0.5 * ae_dist / ref_dist)
 
     # ignore self-similarity, low-spike and noise clusters
-    for i in range(ae_dist.shape[0]):
-        ae_sim[i, i] = 0
-    for i in range(ae_dist.shape[0]):
-        if cl_good[i] == False:
-            ae_sim[i, :] = 0
-            ae_sim[:, i] = 0
+    np.fill_diagonal(ae_sim, 0)
+    ae_sim[cl_good == False, :] = 0
+    ae_sim[:, cl_good == False] = 0
 
     # penalize pairs with different peak channels
     amps = np.max(mean_wf, 2) - np.min(mean_wf, 2)
-    for i in range(ae_dist.shape[0]):
+    for i in tqdm(range(ae_dist.shape[0]), "Calculating similarity metric"):
         for j in range(i, ae_dist.shape[0]):
             if (cl_good[i]) and (cl_good[j]):
                 p1 = peak_chans[i]
@@ -418,7 +410,7 @@ def calc_ref_p(
 
 def merge_clusters(
     clusters: NDArray[np.int_],
-    counts: dict[int, int] | NDArray[np.float_],
+    counts: NDArray[np.int_],
     mean_wf: NDArray[np.float_],
     final_metric: NDArray[np.float_],
     params: dict[str, Any],
@@ -426,18 +418,18 @@ def merge_clusters(
     """
     Computes (multi-way) merges between candidate cluster pairs.
 
-    ### Args:
-        - `clusters` (np.ndarray): Spike cluster assignments.
-        - `counts` (dict): Number of spikes per cluster, indexed by cluster id.
-        - `mean_wf` (np.ndarray): Cluster mean waveforms with shape (# of clusters,
+    Args:
+        clusters (NDArray): Spike cluster assignments.
+        counts (NDArray): Number of spikes per cluster, indexed by cluster id.
+        mean_wf (NDArray): Cluster mean waveforms with shape (# of clusters,
             # channels, # timepoints).
-        - `final_metric` (np.ndarray): Final metric values for each cluster pair.
-        - `params` (dict): General SpECtr params.
+        final_metric (NDArray): Final metric values for each cluster pair.
+        params (dict): General SpECtr params.
 
-    ### Returns:
-        - `old2new` (dict): Map from pre-merge cluster ID to post-merge cluster ID.
+    Returns:
+        old2new (dict): Map from pre-merge cluster ID to post-merge cluster ID.
             Cluster IDs that were unchanged do not appear.
-        - `new2old` (dict): Map from post-merge cluster ID to pre-merge cluster IDs.
+        new2old (dict): Map from post-merge cluster ID to pre-merge cluster IDs.
             Intermediate/unused/unchanged cluster IDs do not appear.
 
     """
@@ -466,13 +458,6 @@ def merge_clusters(
     new2old = {}
     old2new = {}
     new_ind = int(clusters.max() + 1)
-
-    # convert counts to array
-    temp = np.zeros(cl_max)
-    for i in range(cl_max):
-        if i in counts:
-            temp[i] = counts[i]
-    counts = temp
 
     # merge logic
     for pair in pairs:

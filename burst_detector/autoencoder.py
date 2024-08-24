@@ -1,19 +1,14 @@
 import os
-import random
 from typing import Any, Callable
 
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from numpy.typing import NDArray
 from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader, Dataset, Subset, WeightedRandomSampler
-from torchvision import datasets, transforms
-from torchvision.transforms import ToTensor
-from torchvision.utils import save_image
+from torch.utils.data import DataLoader, Dataset, Subset
+from tqdm import tqdm
 
 import burst_detector as bd
 
@@ -35,93 +30,81 @@ def generate_train_data(
     on its shape. To reduce training time, we cap the number of snippets that
     are generated per cluster.
 
-    ### Args:
-        - `data` (np.ndarray): ephys data with shape (# of timepoints, # of channels).
+    Args:
+        data (NDArray): ephys data with shape (# of timepoints, # of channels).
             Should be passed in as an np.memmap for large datasets.
-        - `ci` (dict): Cluster information --
-            - `times` (np.ndarray): Spike times.
-            - `times_multi` (list): Spike times indexed by cluster id.
-            - `clusters` (np.ndarray): Spike cluster assignments.
-            - `counts` (dict): Spike counts per cluster.
-            - `labels` (pd.DataFrame): Cluster quality labels.
-            - `mean_wf` (np.ndarray): Cluster mean waveforms with shape
+        ci (dict): Cluster information --
+            times_multi (list): Spike times indexed by cluster id.
+            clusters (NDArray): Spike cluster assignments.
+            counts (dict): Spike counts per cluster.
+            labels (pd.DataFrame): Cluster quality labels.
+            mean_wf (NDArray): Cluster mean waveforms with shape
                 (# of clusters, # channels, # timepoints).
-        - `channel_pos` (np.ndarray): XY coordinates of each channel on the probe.
-        - `ext_params` (dict): Snippet extraction parameters --
-            - `pre_samples` (int): Number of samples to include before spike time.
-            - `post_samples` (int): Number of samples to after before spike time.
-            - `num_chan` (int): Number of channels to include in spike waveform.
-            - `for_shft` (bool): True if dataset will be used to train a shift-invariant autoencoder.
-       - `params` (dict): General SpECtr params
-    ### Returns:
-        - `spikes` (torch.Tensor): Extracted spike snippets with shape
+        channel_pos (NDArray): XY coordinates of each channel on the probe.
+        ext_params (dict): Snippet extraction parameters --
+            pre_samples (int): Number of samples to include before spike time.
+            post_samples (int): Number of samples to after before spike time.
+            num_chan (int): Number of channels to include in spike waveform.
+            for_shft (bool): True if dataset will be used to train a shift-invariant autoencoder.
+       params (dict): General SpECtr params
+    Returns:
+        spikes (torch.Tensor): Extracted spike snippets with shape
             (# snippets, 1, # channels, # timepoints). This Tensor lives on the GPU
             if available.
-        - `cl_ids` (np.ndarray): Cluster labels of spike snippets with shape (# snippets)
+        cl_ids (NDArray): Cluster labels of spike snippets with shape (# snippets)
     """
+    # Load existing spike snippets
+    spikes_path = os.path.join(params["KS_folder"], "automerge", "spikes.pt")
+    if os.path.exists(spikes_path):
+        print("Loading existing spike snippets...")
+        torch_data = torch.load(spikes_path)
+        return torch_data["spikes"], torch_data["cl_ids"]
+
+    print("cuda: ", torch.cuda.is_available())
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Pre-compute the set of closest channels for each channel.
-    chans: dict[int, list[int]] = {}
-    for i in range(ci["mean_wf"].shape[0]):
-        if i in ci["counts"]:
-            chs: NDArray[np.int_]
-            peak: int
-            chs, peak = bd.find_best_channels(
-                ci["mean_wf"][i], channel_pos, ext_params["num_chan"]
-            )
-            # TODO: figure out if we can remove the following two lines
-            dists: NDArray[np.float_] = bd.get_dists(channel_pos, peak, chs)
-            chans[i] = chs[np.argsort(dists)].tolist()
+    good_ids = np.unique(ci["good_ids"])
+    chans = {}
+    for id in good_ids:
+        chs, peak = bd.find_best_channels(
+            ci["mean_wf"][id], channel_pos, ext_params["num_chan"]
+        )
+        dists = bd.get_dists(channel_pos, peak, chs)
+        chans[id] = chs[np.argsort(dists)].tolist()
 
     if ext_params["for_shft"]:
         ext_params["pre_samples"] += 5
         ext_params["post_samples"] += 5
 
-    # To optimize runtime, we first count the total number of snippets that will be
-    # extracted and allocate a fixed-size array.
-    n_snip: int = 0
-    for i in range(ci["clusters"].max() + 1):
-        if (
-            (i in ci["counts"])
-            and (ci["counts"][i] > params["min_spikes"])
-            and (
-                ci["labels"].loc[ci["labels"]["cluster_id"] == i, "group"].item()
-                in params["good_lbls"]
-            )
-        ):
-            cl_times: NDArray[np.int64] = ci["times_multi"][i].astype("int64")
-            n_snip += min(params["max_spikes"], cl_times.shape[0])
+    # Pre-allocate memory for the snippets for good cluster
+    n_snip = np.sum(ci["counts"][good_ids])
 
-    snip_idx: int = 0
-    spikes: torch.Tensor = torch.zeros(
-        (n_snip, 1, 8, ext_params["pre_samples"] + ext_params["post_samples"])
-    ).to(device)
-    cl_ids: NDArray[np.int16] = np.zeros(n_snip, dtype="int16")
+    spikes = torch.zeros(
+        (
+            n_snip,
+            1,
+            ext_params["num_chan"],
+            ext_params["pre_samples"] + ext_params["post_samples"],
+        ),
+        device=device,
+    )
+    cl_ids = np.zeros(n_snip, dtype="int16")
 
-    for i in range(ci["clusters"].max() + 1):
-        if (
-            (i in ci["counts"])
-            and (ci["counts"][i] > params["min_spikes"])
-            and (
-                ci["labels"].loc[ci["labels"]["cluster_id"] == i, "group"].item()
-                in params["good_lbls"]
-            )
-        ):
-            cl_times = ci["times_multi"][i].astype("int64")
+    snip_idx = 0
+    for id in tqdm(good_ids, desc="Generating snippets"):
+        cl_times = ci["times_multi"][id].astype("int64")
 
-            if params["max_spikes"] < cl_times.shape[0]:
-                np.random.shuffle(cl_times)
-                cl_times = cl_times[: params["max_spikes"]]
+        start_times = cl_times - ext_params["pre_samples"]
+        end_times = cl_times + ext_params["post_samples"]
+        for j, (start, end) in enumerate(zip(start_times, end_times)):
+            cl_ids[snip_idx + j] = id
+            spike = np.nan_to_num(data[start:end, chans[id]].T)
+            spikes[snip_idx + j] = torch.Tensor(spike).unsqueeze(dim=0)
+        snip_idx += cl_times.shape[0]
 
-            for j in range(cl_times.shape[0]):
-                cl_ids[snip_idx + j] = i
-
-                start: int = cl_times[j] - ext_params["pre_samples"]
-                end: int = cl_times[j] + ext_params["post_samples"]
-                spike: NDArray[np.float_] = np.nan_to_num(data[start:end, chans[i]].T)
-                spikes[snip_idx + j] = torch.Tensor(spike).unsqueeze(dim=0)
-            snip_idx += cl_times.shape[0]
+    # Save the snippets to disk
+    torch.save({"spikes": spikes, "cl_ids": cl_ids}, spikes_path)
     return spikes, cl_ids
 
 
@@ -129,11 +112,11 @@ class SpikeDataset(Dataset):
     """
     A Dataset class to hold spike snippets.
 
-    ### Attributes:
-        - `spikes` (torch.Tensor): Spike snippets.
-        - `labels` (np.ndarray): Cluster ids for each snippet.
-        - `transform` (function): Transform to apply to snippets.
-        - `target_transform` (function): Transform to apply to labels.
+    Attributes:
+        spikes (torch.Tensor): Spike snippets.
+        labels (NDArray): Cluster ids for each snippet.
+        transform (function): Transform to apply to snippets.
+        target_transform (function): Transform to apply to labels.
     """
 
     def __init__(
@@ -165,15 +148,18 @@ class CN_AE(nn.Module):
     """
     A convolutional autoencoder for spike snippet feature extraction.
 
-    Consists of three Conv + Pool layers, a fully connected bottleneck layer, and
-    three Conv + Upsample layers. Each layer is wrapped in a ReLu except the output layer.
+    This model consists of three convolutional layers with pooling operations in the encoder,
+    followed by a fully connected layer as the bottleneck, and then three convolutional transpose
+    layers with upsampling operations in the decoder. Each layer is followed by a ReLU activation
+    except the output layer.
 
-    ### Attributes:
-        - `num_chan` (int): number of channels in snippets
-        - `num_samp` (int): number of timepoints per channel in snippets
-        - `n_filt`, `half_filt`, `qrt_filt` (ints): number of convolutional filters
-            to use for various layers
-        - `featureDim`: number of features in the input to the fully connected bottleneck
+    Attributes:
+        num_chan (int): number of channels in snippets
+        num_samp (int): number of timepoints per channel in snippets
+        n_filt (int): number of convolutional filters in the bottleneck
+        half_filt (int): number of filters for the second convolutional layer in the encoder
+        qrt_filt (int): number of filters for the first convolutional layer in the encoder
+        featureDim: number of features in the input to the fully connected bottleneck
     """
 
     def __init__(
@@ -185,44 +171,49 @@ class CN_AE(nn.Module):
         num_samp: int = 40,
     ) -> None:
         super(CN_AE, self).__init__()
-        self.num_chan: int = num_chan
-        self.num_samp: int = num_samp
-        self.n_filt: int = n_filt
-        self.half_filt = int(n_filt / 2)
-        self.qrt_filt = int(n_filt / 4)
-        self.featureDim = int(n_filt * self.num_chan / 8 * self.num_samp / 8)
+        self.num_chan = num_chan
+        self.num_samp = num_samp
+        self.n_filt = n_filt
+        self.half_filt = n_filt // 2
+        self.qrt_filt = n_filt // 4
+        self.featureDim = (n_filt * num_chan // 8) * (num_samp // 8)
 
-        self.encConv1 = nn.Conv2d(imgChannels, self.qrt_filt, (3, 3), padding="same")
+        # Encoder layers
+        self.encConv1 = nn.Conv2d(
+            imgChannels, self.qrt_filt, kernel_size=3, padding="same"
+        )
         self.encBN1 = nn.BatchNorm2d(self.qrt_filt)
-        self.encPool1 = nn.MaxPool2d((2, 2))
+        self.encPool1 = nn.MaxPool2d(kernel_size=2)
 
-        self.encConv2 = nn.Conv2d(self.qrt_filt, self.half_filt, (3, 3), padding="same")
+        self.encConv2 = nn.Conv2d(
+            self.qrt_filt, self.half_filt, kernel_size=3, padding="same"
+        )
         self.encBN2 = nn.BatchNorm2d(self.half_filt)
-        self.encPool2 = nn.MaxPool2d((2, 2))
+        self.encPool2 = nn.MaxPool2d(kernel_size=2)
 
-        self.encConv3 = nn.Conv2d(self.half_filt, n_filt, (3, 3), padding="same")
+        self.encConv3 = nn.Conv2d(self.half_filt, n_filt, kernel_size=3, padding="same")
         self.encBN3 = nn.BatchNorm2d(n_filt)
-        self.encPool3 = nn.MaxPool2d((2, 2))
+        self.encPool3 = nn.MaxPool2d(kernel_size=2)
 
         self.encFC1 = nn.Linear(self.featureDim, zDim)
         self.decFC1 = nn.Linear(zDim, self.featureDim)
         self.decBN1 = nn.BatchNorm2d(n_filt)
 
-        self.decUpSamp1 = nn.Upsample((int(num_chan / 4), int(num_samp / 4)))
+        self.decUpSamp1 = nn.Upsample(size=(num_chan // 4, num_samp // 4))
         self.decConv1 = nn.ConvTranspose2d(
-            n_filt, self.half_filt, (3, 3), padding=(1, 1)
+            n_filt, self.half_filt, kernel_size=3, padding=1
         )
         self.decBN2 = nn.BatchNorm2d(self.half_filt)
 
-        self.decUpSamp2 = nn.Upsample((int(num_chan / 2), int(num_samp / 2)))
+        self.decUpSamp2 = nn.Upsample(size=(num_chan // 2, num_samp // 2))
         self.decConv2 = nn.ConvTranspose2d(
-            self.half_filt, self.qrt_filt, (3, 3), padding=(1, 1)
+            self.half_filt, self.qrt_filt, kernel_size=3, padding=1
         )
         self.decBN3 = nn.BatchNorm2d(self.qrt_filt)
 
-        self.decUpSamp3 = nn.Upsample((num_chan, num_samp))
+        self.decUpSamp3 = nn.Upsample(size=(num_chan, num_samp))
         self.decConv3 = nn.ConvTranspose2d(
-            self.qrt_filt, imgChannels, (3, 3), padding=(1, 1)
+            self.qrt_filt, imgChannels, kernel_size=3, padding=1
         )
 
     def encoder(self, x: torch.Tensor) -> torch.Tensor:
@@ -263,6 +254,37 @@ class CN_AE(nn.Module):
         return out
 
 
+def _apply_time_shift(
+    spks: torch.Tensor, pre_samples: int, post_samples: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Applies random time shifts to a subset of spike snippets for data augmentation.
+
+    ### Args:
+        - `spks` (torch.Tensor): Original spike snippets.
+        - `pre_samples` (int): Number of pre-samples before spike time.
+        - `post_samples` (int): Number of post-samples after spike time.
+
+    ### Returns:
+        - `spks` (torch.Tensor): Time-shifted spike snippets.
+        - `targ` (torch.Tensor): Target snippets (unshifted).
+    """
+    B = spks.shape[0]
+    targ = spks[:, :, :, 5:-5].clone()
+    shft_spks = targ.clone()
+    shft_ind = np.random.choice(B, int(B * 0.3), replace=False)
+
+    for ind in shft_ind:
+        shifts = np.arange(-5, 6)
+        shifts = shifts[shifts != 0]
+        shift = np.random.choice(shifts, 1)[0]
+        shft_spks[ind] = spks[
+            ind, :, :, 5 + shift : pre_samples + post_samples + 5 + shift
+        ].clone()
+
+    return shft_spks, targ
+
+
 def train_ae(
     spikes: torch.Tensor,
     cl_ids: NDArray[np.int_],
@@ -300,122 +322,69 @@ def train_ae(
         - `spk_data` (SpikeDataset): Dataset containing snippets used for training.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Initialize the dataset and dataloaders
     spk_data = SpikeDataset(spikes, cl_ids)
     labels = cl_ids
 
-    train_indices: list
-    test_indices: list
-    _: Any
     train_indices, test_indices, _, _ = train_test_split(
         range(len(spk_data)), labels, stratify=labels, test_size=0.2, random_state=42
     )
     train_split = Subset(spk_data, train_indices)
     test_split = Subset(spk_data, test_indices)
 
-    BATCH_SIZE: int = 128
+    BATCH_SIZE = 128
     train_loader = DataLoader(train_split, batch_size=BATCH_SIZE, shuffle=True)
     test_loader = DataLoader(test_split, batch_size=BATCH_SIZE)
 
-    net: CN_AE = model if model else CN_AE(zDim=zDim, n_filt=n_filt).to(device)
+    net = model if model else CN_AE(zDim=zDim, n_filt=n_filt).to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
-    test_loss: NDArray[np.float_] = np.zeros(num_epochs)
 
     # TRAIN/TEST LOOP
-    for epoch in range(num_epochs):
-        print("Epoch %d/%d" % (epoch + 1, num_epochs))
-        running_loss: float | torch.Tensor = 0
-        last_loss: float | torch.Tensor = 0
+    for epoch in tqdm(range(num_epochs), desc="Epoch"):
         net.train()
+        running_loss = 0
 
         # TRAINING ITERATION
-        for idx, data in enumerate(train_loader, 0):
-            print(
-                "\rTraining batch " + str(idx + 1) + "/" + str(len(train_loader)),
-                end="",
-            )
-
-            spks: torch.Tensor
-            cl: NDArray[np.int_]
-            spks, cl = data
+        for spks, _ in tqdm(train_loader, desc="Training", leave=False):
+            spks = spks.to(device)
 
             # If explicitly training time-shift invariance, we randomly shift 30% of the
             # input snippets.
             if do_shft:
-                targ: torch.Tensor = spks[:, :, :, 5:-5].clone()
-                shft_ind: NDArray[np.int_] = np.random.choice(
-                    np.arange(spks.shape[0]), int(spks.shape[0] * 0.3), replace=False
-                )
-                shft_spks: torch.Tensor = spks[:, :, :, 5:-5].clone()
-                for ind in shft_ind:
-                    shift: NDArray[np.int_] = np.random.choice(
-                        [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5], 1
-                    )[0]
-                    shft_spks[ind, :, :, :] = spks[
-                        ind, :, :, 5 + shift : pre_samples + post_samples + 5 + shift
-                    ].clone()
-                spks = shft_spks
+                spks, targ = _apply_time_shift(spks, pre_samples, post_samples)
             else:
-                targ = spks
-                spks = spks
+                targ = spks.clone()
 
             out: torch.Tensor = net(spks)
             loss: torch.Tensor = loss_fn(out, targ)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            running_loss += loss.item()
 
-            running_loss += loss
-            if idx % 500 == 499:
-                last_loss = running_loss / 500
-                print(" Batch %d | loss: %.4f" % (idx, last_loss))
-                running_loss = 0
-        print()
-        last_loss = running_loss / (len(train_loader) % 500)
+        avg_train_loss = running_loss / len(train_loader)
 
         # TESTING ITERATION
-        running_tloss = 0
         net.eval()
-        i: int = 0
+        running_tloss = 0
         with torch.no_grad():
-            for i, data in enumerate(test_loader):
-                print(
-                    "\rTesting batch " + str(i + 1) + "/" + str(len(test_loader)),
-                    end="",
-                )
-
-                spks, cl = data
+            for spks, _ in tqdm(test_loader, desc="Testing", leave=False):
+                spks = spks.to(device)
                 # If explicitly training time-shift invariance, we randomly shift 30% of
                 # the input snippets.
                 if do_shft:
-                    targ = spks[:, :, :, 5:-5].clone()
-                    shft_ind: NDArray[np.int_] = np.random.choice(
-                        np.arange(spks.shape[0]),
-                        int(spks.shape[0] * 0.3),
-                        replace=False,
-                    )
-                    shft_spks: torch.Tensor = spks[:, :, :, 5:-5].clone()
-                    for ind in shft_ind:
-                        shift: NDArray[np.int_] = np.random.choice(
-                            [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5], 1  # type: ignore
-                        )[0]
-                        shft_spks[ind, :, :, :] = spks[
-                            ind,
-                            :,
-                            :,
-                            5 + shift : pre_samples + post_samples + 5 + shift,
-                        ].clone()
-                    spks = shft_spks
+                    spks, targ = _apply_time_shift(spks, pre_samples, post_samples)
                 else:
-                    targ = spks
-                    spks = spks
+                    targ = spks.clone()
 
                 out = net(spks)
                 tloss: torch.Tensor = loss_fn(out, targ)
-                running_tloss += tloss
+                running_tloss += tloss.item()
 
-        avg_vloss: torch.Tensor | float = running_tloss / (i + 1)
-        test_loss[epoch] = avg_vloss
-        print("\nLOSS | train: %.4f | test %.4f" % (last_loss, avg_vloss))
-
+        avg_test_loss = running_tloss / len(test_loader)
+        tqdm.write(
+            f"Epoch {epoch + 1}/{num_epochs} | Train Loss: {avg_train_loss:.4f} | Test Loss: {avg_test_loss:.4f}"
+        )
     return net, spk_data

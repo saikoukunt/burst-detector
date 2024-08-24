@@ -15,18 +15,24 @@ from tqdm import tqdm
 
 
 def find_times_multi(
-    sp_times: NDArray[np.float_], sp_clust: NDArray[np.int_], clust_ids: list[int]
+    sp_times: NDArray[np.float_],
+    sp_clust: NDArray[np.int_],
+    clust_ids: list[int],
+    max_spikes: int,
+    data: NDArray[np.int_],
+    pre_samples: int = 20,
+    post_samples: int = 62,
 ) -> list[NDArray[np.float_]]:
     """
     Finds all the spike times for each of the specified clusters.
 
-    ### Args:
-        - `sp_times` (np.ndarray): Spike times (in any unit of time).
-        - `sp_clust` (np.ndarray): Spike cluster assignments.
-        - `clust_ids` (np.ndarray): Clusters for which spike times should be returned.
+    Args:
+        sp_times (NDArray): Spike times (in any unit of time).
+        sp_clust (NDArray): Spike cluster assignments.
+        clust_ids (NDArray): Clusters for which spike times should be returned.
 
-    ### Returns:
-        `cl_times`: found cluster spike times.
+    Returns:
+        cl_times (list): found cluster spike times.
     """
     # Initialize the returned list and map cluster id to list index
     cl_times: list = []
@@ -36,29 +42,41 @@ def find_times_multi(
         cl_to_ind[clust_ids[i]] = i
 
     for i in range(sp_times.shape[0]):
-        if sp_clust[i] in cl_to_ind:
-            cl_times[cl_to_ind[sp_clust[i]]].append(sp_times[i])
+        time = sp_times[i]
+        if (
+            sp_clust[i] in cl_to_ind
+            and time >= pre_samples
+            and time < data.shape[0] - post_samples
+        ):
+            cl_times[cl_to_ind[sp_clust[i]]].append(time)
     for i in range(len(cl_times)):
         cl_times[i] = np.array(cl_times[i])
+        if max_spikes != -1 and cl_times[i].shape[0] > max_spikes:
+            # random shuffle and take the first max_spikes
+            np.random.shuffle(cl_times[i])
+            cl_times[i] = cl_times[i][:max_spikes]
 
     return cl_times
 
 
-def spikes_per_cluster(sp_clust: NDArray[np.int_]) -> NDArray[np.int_]:
+def spikes_per_cluster(sp_clust: NDArray[np.int_], max_spikes: int) -> NDArray[np.int_]:
     """
     Counts the number of spikes in each cluster.
 
-    ### Args
-        - `sp_clust` (nd.array): Spike cluster assignments.
+    Args
+        sp_clust (NDArray): Spike cluster assignments.
+        max_spikes (int): The maximum number of spikes to count for each cluster.
 
-    ### Returns
-        - `counts_array` (NDArray): Number of spikes per cluster, indexed by
+    Returns
+        counts_array (NDArray): Number of spikes per cluster, indexed by
             cluster id. Shape is (max_cluster_id + 1,).
 
     """
     ids, counts = np.unique(sp_clust, return_counts=True)
     counts_array = np.zeros(ids.max() + 1, dtype=int)
     counts_array[ids] = counts
+    if max_spikes != -1:
+        counts_array[counts_array > max_spikes] = max_spikes
     return counts_array
 
 
@@ -68,7 +86,6 @@ def extract_spikes(
     clust_id: int,
     pre_samples: int = 20,
     post_samples: int = 62,
-    n_chan: int = 385,
     max_spikes: int = -1,
 ) -> NDArray[np.int_]:
     """
@@ -77,42 +94,35 @@ def extract_spikes(
     If the cluster contains more than `max_spikes` spikes, `max_spikes` random
     spikes are extracted instead.
 
-    ### Args:
-        - `data` (np.ndarray): Ephys data with shape (# of timepoints, # of channels).
+    Args:
+        data` (NDArray): Ephys data with shape (# of timepoints, # of channels).
             Should be passed in as an np.memmap for large datasets.
-        - `times_multi` (list): Spike times indexed by cluster id.
-        - `clust_id` (list): The cluster to extract spikes from
-        - `pre_samples` (int): The number of samples to extract before the peak of the
+        times_multi (list): Spike times indexed by cluster id.
+        clust_id (list): The cluster to extract spikes from
+        pre_samples (int): The number of samples to extract before the peak of the
             spike. Defaults to 20.
-        - `post_samples` (int): The number of samples to extract after the peak of the
+        post_samples (int): The number of samples to extract after the peak of the
             spike. Defaults to 62.
-        - `n_chan` (int): The number of channels in the recording. Defaults to
-            385 to match NP 1.0/2.0.
-        - `max_spikes` (int): The maximum number of spikes to extract. If -1, all
+        max_spikes (int): The maximum number of spikes to extract. If -1, all
             spikes are extracted. Defaults to -1.
 
-    ### Returns:
-        - `spikes` (np.ndarray): Array of extracted spike waveforms with shape
+    Returns:
+        spikes (NDArray): Array of extracted spike waveforms with shape
             (# of spikes, # of channels, # of timepoints).
     """
     times = times_multi[clust_id].astype("int64")
 
+    # This should not matter as dealt with in times_multi
     # Ignore spikes that are cut off by the ends of the recording
-    while (times[0] - pre_samples) < 0:
-        times = times[1:]
-    while (times[-1] + post_samples) >= data.shape[0]:
-        times = times[:-1]
+    times = times[(times >= pre_samples) & (times < data.shape[0] - post_samples)]
 
     # Randomly pick spikes if the cluster has too many
-    if (max_spikes != -1) and (max_spikes < times.shape[0]):
-        np.random.shuffle(times)
-        times = times[:max_spikes]
+    if (max_spikes != -1) and (times.shape[0] > max_spikes):
+        print("Too many spikes, randomly selecting...")
+        times = np.random.choice(times, size=max_spikes, replace=False)
 
-    spikes: NDArray[np.int_] = np.zeros(
-        (times.shape[0], n_chan, pre_samples + post_samples), dtype="int64"
-    )
-    for i in range(times.shape[0]):
-        spikes[i, :, :] = data[times[i] - pre_samples : times[i] + post_samples, :].T
+    # Extract spike data around each spike time
+    spikes = np.array([data[t - pre_samples : t + post_samples, :].T for t in times])
 
     return spikes
 
@@ -159,19 +169,18 @@ def calc_mean_and_std_wf(
                     i,
                     params["pre_samples"],
                     params["post_samples"],
-                    params["n_chan"],
                     params["max_spikes"],
                 )
                 spikes[i] = spikes_i
     except FileNotFoundError and OSError:
-        mean_wf = cpx.zeros_pinned(
+        mean_wf = cp.zeros(
             (
                 n_clusters,
                 params["n_chan"],
                 params["pre_samples"] + params["post_samples"],
             )
         )
-        std_wf = cpx.zeros_like_pinned(mean_wf)
+        std_wf = cp.zeros_like(mean_wf)
         spikes = {}
         for i in tqdm(cluster_ids, desc="Calculating mean and std waveforms"):
             spikes_i = extract_spikes(
@@ -180,7 +189,6 @@ def calc_mean_and_std_wf(
                 i,
                 params["pre_samples"],
                 params["post_samples"],
-                params["n_chan"],
                 params["max_spikes"],
             )
             spikes_cp = cp.asarray(spikes_i)

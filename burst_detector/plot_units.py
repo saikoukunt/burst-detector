@@ -32,14 +32,16 @@ def main() -> None:
     ).flatten()
     n_clust = clusters.max() + 1
 
-    # count spikes per cluster, load quality labels
-    counts = bd.spikes_per_cluster(clusters)
-    times_multi = bd.find_times_multi(times, clusters, np.arange(clusters.max() + 1))
-
     # load recording
     rawData = np.memmap(params["data_filepath"], dtype=params["dtype"], mode="r")
     data: NDArray[np.int_] = np.reshape(
         rawData, (int(rawData.size / params["n_chan"]), params["n_chan"])
+    )
+
+    # count spikes per cluster, load quality labels
+    counts = bd.spikes_per_cluster(clusters, params["max_spikes"])
+    times_multi = bd.find_times_multi(
+        times, clusters, np.arange(n_clust), params["max_spikes"], data
     )
 
     # filter out low-spike/noise units
