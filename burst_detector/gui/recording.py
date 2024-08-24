@@ -74,7 +74,7 @@ class Recording(object):
 
         # calculate things
         self.n_clust = self.clusters.max() + 1
-        self.counts = bd.spikes_per_cluster(self.clusters, self.params["max_spikes"])
+        self.counts = bd.spikes_per_cluster(self.clusters)
         self.cl_times = bd.find_times_multi(
             self.sp_times,
             self.clusters,

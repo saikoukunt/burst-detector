@@ -40,10 +40,6 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
         cl_labels["group"] = cl_labels["KSLabel"]
 
     # Compute useful cluster info.
-    n_clust = clusters.max() + 1
-    counts = bd.spikes_per_cluster(clusters)
-    times_multi = bd.find_times_multi(times, clusters, np.arange(clusters.max() + 1))
-
     # Load the ephys recording.
     rawData = np.memmap(params["data_filepath"], dtype=params["dtype"], mode="r")
     data: NDArray[np.int16] = np.reshape(

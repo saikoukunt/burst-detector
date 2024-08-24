@@ -50,7 +50,6 @@ def find_times_multi(
             cl_times[cl_to_ind[sp_clust[i]]].append(time)
     for i in range(len(cl_times)):
         cl_times[i] = np.array(cl_times[i])
-
     return cl_times
 
 
@@ -69,6 +68,7 @@ def spikes_per_cluster(sp_clust: NDArray[np.int_]) -> NDArray[np.int_]:
     ids, counts = np.unique(sp_clust, return_counts=True)
     counts_array = np.zeros(ids.max() + 1, dtype=int)
     counts_array[ids] = counts
+
     return counts_array
 
 
