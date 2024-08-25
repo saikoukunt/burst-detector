@@ -5,12 +5,8 @@ These functions are not used in the merge finder unless the option to use mean
 similarity is selected (autoencoder-based similarity is the default).
 """
 
-import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 from numpy.typing import NDArray
-
-import burst_detector as bd
 
 
 def calc_wf_norms(wfs: NDArray[np.float_]) -> NDArray[np.float_]:
@@ -25,7 +21,7 @@ def calc_wf_norms(wfs: NDArray[np.float_]) -> NDArray[np.float_]:
     ### Returns:
         -`wf_norm` (np.ndarray): Array of waveform norms.
     """
-    wf_norms: NDArray[np.float_] = np.zeros(wfs.shape[0])
+    wf_norms = np.zeros(wfs.shape[0])
 
     for i in range(wfs.shape[0]):
         wf_norms[i] = np.linalg.norm(wfs[i])
@@ -98,14 +94,14 @@ def find_jitter(
     To avoid spurious shifts, a nonzero shift must increase the inner product by < 0.1
     to be counted.
 
-    ### Args:
-        - `m1`, `m2` (np.ndarray): Input waveforms with shape (# of channels, # of
-            timepoints)
-        - `max_jitter`: The maximum shift to consider (in samples).
+    Args:
+        m1 (NDArray): Input waveform with shape (# channels, # timepoints)
+        m2 (NDArray): Input waveforms with shape (# channels, # timepoints)
+        max_jitter (int): The maximum shift to consider (in samples).
 
-    ### Returns:
-        - `mean_sim` (float): The maximum inner product.
-        - `jitter` (int): The amount of shift that produced the maximum inner product.
+    Returns:
+        mean_sim (float): The maximum inner product.
+        jitter (int): The amount of shift that produced the maximum inner product.
             Specifies the amount that m2 shifted (negative value signifies
             m2 had to be shifted left).
     """
@@ -146,16 +142,17 @@ def cross_proj(
     Returns the cross-projections (inner products) of spikes onto normalized mean
     waveforms for a single pair of clusters.
 
-    ### Args:
-        - `c1_spikes`, `c2_spikes` (np.ndarray): Arrays of spike waveforms with shape
-            (# of spikes, # of channels, # of timepoints).
-        - `c1_mean`, `c2_mean` (np.ndarray): Cluster mean waveforms with shape
-            (# of channels, # of timepoints)
-        - `c1_norm`, `c2_norm` (float): Frobenius norms for the cluster mean waveforms.
-        - `jitter` (float): Relative time shift between clusters, relative to c2.
+    Args:
+        c1_spikes (NDArray): Array of spike waveforms with shape (# spikes, # channels, # timepoints).
+        c2_spikes (NDArray): Array of spike waveforms with shape (# spikes, # channels, # timepoints).
+        c1_mean (NDArray): Cluster mean waveforms with shape (# channels, # timepoints)
+        c2_mean (NDArray): Cluster mean waveforms with shape (# channels, # timepoints)
+        c1_norm (float): Frobenius norms for the cluster mean waveforms.
+        c2_norm (float): Frobenius norms for the cluster mean waveforms.
+        jitter (float): Relative time shift between clusters, relative to c2.
 
-    ### Returns:
-        - `proj_1on1`, `proj_2on1`, `proj_1on2`, `proj_2on2` (np.ndarray): Projections
+    Returns:
+        (proj_1on1, proj_2on1, proj_1on2, proj_2on2) (NDArray, NDArray, NDArray, NDArray): Projections
              of spikes onto their own and opposite cluster means.
     """
     t_length: int = c1_spikes.shape[2]
@@ -178,13 +175,9 @@ def cross_proj(
 
     norm: float = max(c1_norm, c2_norm)
     for i in range(c1_spikes.shape[0]):
-        proj_1on1[i] = np.dot(c1_spikes[i].flatten(), c1_mean.flatten()) / (
-            c1_norm**2
-        )
+        proj_1on1[i] = np.dot(c1_spikes[i].flatten(), c1_mean.flatten()) / (c1_norm**2)
         proj_1on2[i] = np.dot(c1_spikes[i].flatten(), c2_mean.flatten()) / (norm**2)
     for i in range(c2_spikes.shape[0]):
         proj_2on1[i] = np.dot(c2_spikes[i].flatten(), c1_mean.flatten()) / (norm**2)
-        proj_2on2[i] = np.dot(c2_spikes[i].flatten(), c2_mean.flatten()) / (
-            c2_norm**2
-        )
+        proj_2on2[i] = np.dot(c2_spikes[i].flatten(), c2_mean.flatten()) / (c2_norm**2)
     return proj_1on1, proj_2on1, proj_1on2, proj_2on2

@@ -262,14 +262,14 @@ def _apply_time_shift(
     """
     Applies random time shifts to a subset of spike snippets for data augmentation.
 
-    ### Args:
-        - `spks` (torch.Tensor): Original spike snippets.
-        - `pre_samples` (int): Number of pre-samples before spike time.
-        - `post_samples` (int): Number of post-samples after spike time.
+    Args:
+        spks (torch.Tensor): Original spike snippets.
+        pre_samples (int): Number of pre-samples before spike time.
+        post_samples (int): Number of post-samples after spike time.
 
-    ### Returns:
-        - `spks` (torch.Tensor): Time-shifted spike snippets.
-        - `targ` (torch.Tensor): Target snippets (unshifted).
+    Returns:
+        spks (torch.Tensor): Time-shifted spike snippets.
+        targ (torch.Tensor): Target snippets (unshifted).
     """
     B = spks.shape[0]
     targ = spks[:, :, :, 5:-5].clone()
@@ -302,26 +302,26 @@ def train_ae(
     """
     Creates and trains an autoencoder on the given spike dataset.
 
-    ### Args:
-        - `spikes` (torch.Tensor): Spike snippets.
-        - `cl_ids` (np.ndarray): Cluster ids of spike snippets.
-        - `n_filt` (int): Number of filters in the last convolutional layer before
+    Args:
+        spikes (torch.Tensor): Spike snippets.
+        cl_ids (np.ndarray): Cluster ids of spike snippets.
+        n_filt (int): Number of filters in the last convolutional layer before
             the bottleneck. Defaults to 256, values larger than 1024 cause
             CUDA to run out of memory on most GPUs.
-        - `num_epochs` (int): number of training epochs. Defaults to 25.
-        - `zDim` (int): latent dimensionality of CN_AE. Defaults to 15.
-        - `lr` (float): optimizer learning rate. Defaults to 1e-3.
-        - `pre_samples` (int): number of samples included before spike time. Defaults
+        num_epochs (int): number of training epochs. Defaults to 25.
+        zDi (int): latent dimensionality of CN_AE. Defaults to 15.
+        lr (float): optimizer learning rate. Defaults to 1e-3.
+        pre_samples (int): number of samples included before spike time. Defaults
             to 10.
-        - `post_samples` (int): number of samples included after spike time.
+        post_samples (int): number of samples included after spike time.
             Defaults to 30.
-        - `do_shft` (bool): True if training samples should be randomly time-shifted to
+        do_shft (bool): True if training samples should be randomly time-shifted to
             explicitly induce time shift invariance. Note that the architecture is
             implicitly invariant to time shifts due to the convolutional layers.
-        - `model` (nn.Module, optional): Pre-trained model, if using.
-    ### Returns:
-        - `net` (CN_AE): The trained network.
-        - `spk_data` (SpikeDataset): Dataset containing snippets used for training.
+        model (nn.Module, optional): Pre-trained model, if using.
+    Returns:
+        net (CN_AE): The trained network.
+        spk_data (SpikeDataset): Dataset containing snippets used for training.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

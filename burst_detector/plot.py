@@ -1,27 +1,45 @@
 import math
 import os
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.figure import Figure
+from numpy.typing import NDArray
 
 import burst_detector as bd
 
 
 ### PLOTTING CODE
 def plot_merges(
-    merges,
-    times_multi,
-    mean_wf,
-    std_wf,
-    spikes,
-    params,
-    nchan=20,
-    start=10,
-    stop=60,
-    window_size=0.102,
-    bin_size=0.001,
-):
+    merges: list,
+    times_multi: list,
+    mean_wf: NDArray[np.float_],
+    std_wf: NDArray[np.float_],
+    spikes: NDArray[np.float_],
+    params: dict[str, Any],
+    nchan: int = 20,
+    start: int = 10,
+    stop: int = 60,
+    window_size: float = 0.102,
+    bin_size: float = 0.001,
+) -> None:
+    """
+    Plot the merges by generating waveform and correlation plots.
+    Args:
+        merges (list): List of merges to plot.
+        times_multi (list): List of timestamps for each merge.
+        mean_wf (NDArray): Mean waveform data.
+        std_wf (NDArray): Standard deviation of waveform data.
+        spikes (NDArray): Spike data.
+        params (dict): Parameters for plotting.
+        nchan (int, optional): Number of channels. Defaults to 20.
+        start (int, optional): Start time for plotting. Defaults to 10.
+        stop (int, optional): Stop time for plotting. Defaults to 60.
+        window_size (float, optional): Window size for correlation plot. Defaults to 0.102.
+        bin_size (float, optional): Bin size for correlation plot. Defaults to 0.001.
+    """
     for merge in merges:
         merge.sort()
         wf_plot = plot_wfs(merge, mean_wf, std_wf, spikes, nchan, start, stop)
@@ -42,7 +60,28 @@ def plot_merges(
         plt.close(corr_plot)
 
 
-def plot_wfs(clust, mean_wf, std_wf, spikes, nchan=10, start=10, stop=60):
+def plot_wfs(
+    clust: list[int],
+    mean_wf: NDArray[np.float_],
+    std_wf: NDArray[np.float_],
+    spikes: NDArray,
+    nchan: int = 10,
+    start: int = 10,
+    stop: int = 60,
+) -> Figure:
+    """
+    Plot waveforms for specified clusters.
+    Args:
+        clust (list): List of cluster indices.
+        mean_wf (NDArray): Array of mean waveforms for each cluster.
+        std_wf (NDArray): Array of standard deviation of waveforms for each cluster.
+        spikes (NDArray): Array of spike waveforms for each cluster.
+        nchan (int, optional): Number of channels to plot. Defaults to 10.
+        start (int, optional): Start index of waveform plot. Defaults to 10.
+        stop (int, optional): Stop index of waveform plot. Defaults to 60.
+    Returns:
+        matplotlib.figure.Figure: The generated figure object.
+    """
     peak_chans = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf, 2), 1)
     peak = int(np.mean(peak_chans[clust]))
 
@@ -83,15 +122,14 @@ def plot_wfs(clust, mean_wf, std_wf, spikes, nchan=10, start=10, stop=60):
 
         for cl in range(len(clust)):
             p_ind = or_ind + cl
+            id = clust[cl]
             a = plt.subplot(math.ceil(nchan / 2), 2 * len(clust), p_ind)
             a.set_facecolor("black")
-            # plt.ylabel(i)
-
-            for j in range(min(200, spikes[clust[cl]].shape[0])):
+            for j in range(min(200, spikes[id].shape[0])):
                 (line,) = plt.plot(
-                    spikes[clust[cl]][j, i, start:stop],
-                    label=str(clust[cl]),
-                    color=colors[cl],
+                    spikes[id][j, i, start:stop],
+                    label=str(id),
+                    color=COLORS[cl],
                     linewidth=0.25,
                 )
             lines.append(line)  # type: ignore
@@ -99,8 +137,6 @@ def plot_wfs(clust, mean_wf, std_wf, spikes, nchan=10, start=10, stop=60):
 
             a.spines["top"].set_visible(False)
             a.spines["right"].set_visible(False)
-            # a.spines["bottom"].set_visible(False)
-            # a.spines["left"].set_visible(False)
 
             plt.tick_params(
                 axis="x",  # changes apply to the x-axis
@@ -128,7 +164,24 @@ def plot_wfs(clust, mean_wf, std_wf, spikes, nchan=10, start=10, stop=60):
     return fig
 
 
-def plot_corr(clust, times_multi, params, window_size=0.102, bin_size=0.001):
+def plot_corr(
+    clust: list[int],
+    times_multi: list[NDArray[np.float_]],
+    params: dict[str, Any],
+    window_size: float = 0.102,
+    bin_size: float = 0.001,
+) -> Figure:
+    """
+    Plots the auto and cross correlograms for a given set of clusters.
+    Args:
+        clust (list): List of cluster indices.
+        times_multi (list): List of spike times for each cluster.
+        params (dict): Dictionary of parameters.
+        window_size (float): Size of the correlation window in seconds. Default is 0.102.
+        bin_size (float): Size of the correlation bin in seconds. Default is 0.001.
+    Returns:
+        fig (Figure): The generated figure.
+    """
     fig, axes = plt.subplots(len(clust), len(clust), figsize=(10, 5))
 
     # auto
@@ -140,7 +193,7 @@ def plot_corr(clust, times_multi, params, window_size=0.102, bin_size=0.001):
         a = plt.subplot(len(clust), len(clust), (i * len(clust)) + (i + 1))
         a.set_facecolor("black")
         a.set_yticks([0, acg.max()])
-        plt.bar(range(len(acg)), acg, width=1, color=colors[i])  # type: ignore
+        plt.bar(range(len(acg)), acg, width=1, color=COLORS[i])  # type: ignore
 
         a.spines["top"].set_visible(False)
         a.spines["right"].set_visible(False)
@@ -172,9 +225,9 @@ def plot_corr(clust, times_multi, params, window_size=0.102, bin_size=0.001):
                 a.set_yticks([0, ccg.max()])
 
                 if i > j:
-                    plt.bar(range(len(ccg)), ccg[::-1], width=1, color=light_colors[i])  # type: ignore
+                    plt.bar(range(len(ccg)), ccg[::-1], width=1, color=LIGHT_COLORS[i])  # type: ignore
                 else:
-                    plt.bar(range(len(ccg)), ccg, width=1, color=light_colors[i])  # type: ignore
+                    plt.bar(range(len(ccg)), ccg, width=1, color=LIGHT_COLORS[i])  # type: ignore
 
                 plt.xlabel
 
@@ -186,11 +239,12 @@ def plot_corr(clust, times_multi, params, window_size=0.102, bin_size=0.001):
                     labelbottom=False,
                 )  # labels along the bottom edge are off
 
-    for ax, col in zip(axes[-1], clust):
-        ax.set_xlabel(col, size="large")
+    if len(clust) > 1:
+        for ax, col in zip(axes[-1], clust):
+            ax.set_xlabel(col, size="large")
 
-    for ax, row in zip(axes[:, 0], clust):
-        ax.set_ylabel(row, rotation=0, size="large")
+        for ax, row in zip(axes[:, 0], clust):
+            ax.set_ylabel(row, rotation=0, size="large")
 
     fig.tight_layout()
 
@@ -199,7 +253,7 @@ def plot_corr(clust, times_multi, params, window_size=0.102, bin_size=0.001):
 
 ## COLOR ARRAYS
 
-light_colors = [
+LIGHT_COLORS = [
     (229 / 255, 239 / 255, 254 / 255),
     (254 / 255, 231 / 255, 230 / 255),
     (234 / 255, 249 / 255, 234 / 255),
@@ -212,7 +266,7 @@ light_colors = [
     (243 / 255, 243 / 255, 240 / 255),
 ]
 
-colors = [
+COLORS = [
     (0.3528824480447752, 0.5998034969453555, 0.9971704175788023),
     (0.9832565730779054, 0.3694984452949815, 0.3488265255379734),
     (0.4666666666666667, 0.8666666666666667, 0.4666666666666667),

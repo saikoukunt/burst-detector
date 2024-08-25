@@ -1,9 +1,11 @@
 import logging
 import math
 import os
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 from scipy import signal, stats
 from tqdm import tqdm
 
@@ -13,23 +15,17 @@ logger = logging.getLogger("burst-detector")
 
 
 # --------------------------------------------- DATA HANDLING HELPERS -------------------------------------------------
-def find_times_multi(sp_times, sp_clust, clust_ids):
+def find_times_multi(sp_times: NDArray, sp_clust: NDArray, clust_ids: list) -> list:
     """
     Finds all the spike times for each of the specified clusters.
 
-    Parameters
-    ----------
-    sp_times: array_like
-        1-D array containing all spike times.
-    sp_clust: array_like
-        1-D array containing the cluster identity of each spike.
-    clust_ids: list
-        The cluster IDs of the desired spike times.
+    Args:
+        sp_times (NDArray): 1-D array containing all spike times.
+        sp_clust (NDArray): 1-D array containing the cluster identity of each spike.
+        clust_ids (list): The cluster IDs of the desired spike times.
 
-    Returns
-    -------
-    cl_times: list
-        list of NumPy arrays of the spike times for each of the specified clusters.
+    Returns:
+        cl_times (list): list of NumPy arrays of the spike times for each of the specified clusters.
     """
 
     # init big list and reverse dictionary
@@ -51,130 +47,24 @@ def find_times_multi(sp_times, sp_clust, clust_ids):
     return cl_times
 
 
-def extract_spikes(
-    data,
-    times_multi,
-    sp_clust,
-    clust_id,
-    pre_samples=20,
-    post_samples=62,
-    n_chan=385,
-    max_spikes=-1,
-):
+def extract_noise(
+    data: NDArray,
+    times: NDArray,
+    pre_samples: int = 20,
+    post_samples: int = 62,
+    n_chan: int = 385,
+) -> NDArray:
     """
-    Extracts the waveforms for all spikes from the specified cluster.
-
-    Parameters
-    ----------
-    data: array-like
-        electrophysiological data of shape: (# of timepoints, # of channels).
-        Should be passed in as an np.memmap for large datasets.
-    times_multi: list of array_like
-        List containing arrays of spike times indexed by cluster id (e.g. output of find_times_multi).
-    sp_clust: array_like
-        1-D array containing the cluster identity of each spike.
-    clust_id: list
-        The cluster ID of the desired spike times.
-    pre_samples: int, optional
-        The number of samples to extract before the peak of the spike (spike time).
-        Default matches the number in Kilosort templates.
-    post_samples: int, optional
-        The number of samples to extract before the peak of the spike (spike time).
-        Default matches the number in Kilosort templates.
-    n_chan: int, optional
-        Number of channels in the recording. Default matches Neuropixels probes.
-    max_spikes: int, optional
-        The maximum number of spikes to extract. Spike indices are chosen randomly
-        if max_spikes < # of spikes. If max_spikes=-1, extracts all spikes.
-
-    Returns
-    -------
-    spikes: array-like
-        Array containing waveforms of all the spikes in the specified cluster.
-        Shape is (# of spikes, # of channels, # of timepoints) to match
-        ecephys output.
+    Extracts noise snippets from the given data based on the provided spike times.
+    Args:
+        data (NDArray): The input data array.
+        times (NDArray): The spike times array.
+        pre_samples (int, optional): The number of samples to include before each spike time. Defaults to 20.
+        post_samples (int, optional): The number of samples to include after each spike time. Defaults to 62.
+        n_chan (int, optional): The number of channels. Defaults to 385.
+    Returns:
+        NDArray: The noise snippets array.
     """
-    times = times_multi[clust_id].astype("int32")
-
-    # ignore out of bounds spike times
-    end = data.shape[0]
-    times = times[times + post_samples < end]
-    times = times[times - pre_samples >= 0]
-    if len(times) == 0:
-        return np.zeros((1, n_chan, pre_samples + post_samples))
-
-    # cap number of spikes
-    if (max_spikes != -1) and (max_spikes < times.shape[0]):
-        np.random.shuffle(times)
-        times = times[:max_spikes]
-
-    # extract spikes
-    spikes = np.zeros((times.shape[0], n_chan, pre_samples + post_samples))
-    for i in range(times.shape[0]):
-        spikes[i, :, :] = data[times[i] - pre_samples : times[i] + post_samples, :].T
-
-    return spikes
-
-
-def auto_correlogram(c1_times, window_size=0.25, bin_width=0.001, overlap_tol=0):
-    """
-    Calculates the auto correlogram for one spike train.
-
-    Parameters
-    ----------
-    c1_times: array-like
-        An array containing spike times (sorted least to greatest) in seconds.
-    window_size: float
-        Width of cross correlogram window in seconds.
-    bin_width: float
-        Width of cross correlogram bins in seconds.
-    overlap_tol: float, optional
-        Overlap tolerance in seconds. Spikes within the tolerance of the
-        reference spike time will not be counted for cross correlogram calculation.
-
-    Returns
-    -------
-    corrgram: array-like
-        Array containing autocorrelogram with c1_times.
-    overlap: int
-        The number of overlapping spikes.
-    """
-    # init variables
-    corrgram = np.zeros((math.ceil(window_size / bin_width)))
-    overlap = 0
-    start = 0
-
-    # ind1 is reference spike, count ind2 spikes
-    for ind1 in range(c1_times.shape[0]):
-
-        # move start to first spike in window
-        while (start < c1_times.shape[0]) and (
-            c1_times[start] < (c1_times[ind1] - window_size / 2)
-        ):
-            start = start + 1
-
-        # count spikes in window
-        ind2 = start
-        if ind2 >= c1_times.shape[0]:
-            continue
-
-        while (ind2 < c1_times.shape[0]) and (
-            c1_times[ind2] < (c1_times[ind1] + window_size / 2)
-        ):
-            if (ind1 != ind2) and (abs(c1_times[ind1] - c1_times[ind2]) > overlap_tol):
-                gram_ind = min(
-                    math.floor(
-                        (c1_times[ind1] - c1_times[ind2] + window_size / 2) / bin_width
-                    ),
-                    corrgram.shape[0] - 1,
-                )
-                corrgram[gram_ind] += 1
-            ind2 = ind2 + 1
-
-    return corrgram
-
-
-def extract_noise(data, times, pre_samples=20, post_samples=62, n_chan=385):
     # extraction loop
     noise = np.zeros((n_chan, 2000 * (pre_samples + post_samples)))
 
@@ -210,8 +100,15 @@ def extract_noise(data, times, pre_samples=20, post_samples=62, n_chan=385):
     return noise
 
 
-def calc_metrics(ks_folder, data_filepath, n_chan):
-    # load stuffW
+def calc_metrics(ks_folder: str, data_filepath: str, n_chan: int) -> None:
+    """
+    Calculate various metrics for spike sorting.
+    Args:
+        ks_folder (str): The path to the folder containing Kilosort output files.
+        data_filepath (str): The path to the raw data file.
+        n_chan (int): The number of channels in the raw data.
+    """
+    # load stuff
     times = np.load(os.path.join(ks_folder, "spike_times.npy")).flatten()
     clusters = np.load(os.path.join(ks_folder, "spike_clusters.npy")).flatten()
     n_clust = clusters.max() + 1
@@ -242,7 +139,7 @@ def calc_metrics(ks_folder, data_filepath, n_chan):
     noise = extract_noise(data, times, 20, 62, n_chan=n_chan)
     noise_stds = np.std(noise, axis=1)
 
-    snrs = calc_SNR(data, mean_wf, noise_stds, cl_good)
+    snrs = calc_SNR(mean_wf, noise_stds, cl_good)
     slid_rp_viols = calc_sliding_RP_viol(times_multi, cl_good, n_clust)
     num_peaks, num_troughs, wf_durs, spat_decays = calc_wf_shape_metrics(
         mean_wf, cl_good, channel_pos, 0.2
@@ -270,7 +167,7 @@ def calc_metrics(ks_folder, data_filepath, n_chan):
     wf_df.to_csv(os.path.join(ks_folder, "cluster_wf_shape.tsv"), sep="\t")
 
 
-def calc_SNR(data, mean_wf, noise_stds, cl_good):
+def calc_SNR(mean_wf, noise_stds, cl_good):
 
     logger.info("Calculating peak channels and amplitudes")
     # calculate peak chans, amplitudes
@@ -287,7 +184,17 @@ def calc_SNR(data, mean_wf, noise_stds, cl_good):
     return snrs
 
 
-def max_cont(fr, rp, rec_dur, acc_cont):
+def max_cont(fr: float, rp: float, rec_dur: float, acc_cont: float) -> float:
+    """
+    Calculates the maximum number of continuous events expected based on the given parameters.
+    Args:
+        fr (float): The firing rate of the events.
+        rp (float): The refractory period between events.
+        rec_dur (float): The recording duration.
+        acc_cont (float): The acceptable level of continuity.
+    Returns:
+        cnt_exp (float): The maximum number of continuous events expected.
+    """
     time_for_viol = rp * fr * rec_dur * 2
     cnt_exp = acc_cont * time_for_viol
 
@@ -295,8 +202,23 @@ def max_cont(fr, rp, rec_dur, acc_cont):
 
 
 def calc_sliding_RP_viol(
-    times_multi, cl_good, n_clust, bin_size=0.25, acceptThresh=0.25
-):
+    times_multi: list[NDArray[np.float_]],
+    cl_good: NDArray[np.bool_],
+    n_clust: int,
+    bin_size: float = 0.25,
+    acceptThresh: float = 0.25,
+) -> NDArray[np.float32]:
+    """
+    Calculate the sliding refractory period violation confidence for each cluster.
+    Args:
+        times_multi (list[NDArray[np.float_]]): A list of arrays containing spike times for each cluster.
+        cl_good (NDArray[np.bool_]): An array indicating whether each cluster is considered good or not.
+        n_clust (int): The number of clusters.
+        bin_size (float, optional): The size of each bin in milliseconds. Defaults to 0.25.
+        acceptThresh (float, optional): The threshold for accepting refractory period violations. Defaults to 0.25.
+    Returns:
+        NDArray[np.float32]: An array containing the refractory period violation confidence for each cluster.
+    """
     b = np.arange(0, 10.25, bin_size) / 1000
     bTestIdx = np.array([1, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 36, 40], dtype="int8")
     bTest = [b[i] for i in bTestIdx]  # -1 bc 0th bin corresponds to 0-0.5 ms
@@ -307,7 +229,7 @@ def calc_sliding_RP_viol(
         times = times_multi[i] / 30000
         if cl_good[i] and times.shape[0] > 1:
             # calculate and avg halves of acg
-            acg = auto_correlogram(times, 2, bin_size / 1000, 5 / 30000)
+            acg = bd.auto_correlogram(times, 2, bin_size / 1000, 5 / 30000)
             half_len = int(acg.shape[0] / 2)
             acg[half_len:] = (acg[half_len:] + acg[:half_len][::-1]) / 2
             acg = acg[half_len:]
@@ -331,8 +253,25 @@ def calc_sliding_RP_viol(
 
 
 def calc_wf_shape_metrics(
-    mean_wf, cl_good, channel_pos, minThreshDetectPeaksTroughs=0.2
-):
+    mean_wf: NDArray[np.float_],
+    cl_good: NDArray[np.bool_],
+    channel_pos: NDArray[np.float_],
+    minThreshDetectPeaksTroughs: float = 0.2,
+) -> Tuple[NDArray[np.int_], NDArray[np.int_], NDArray[np.float_], NDArray[np.float_]]:
+    """
+    Calculate waveform shape metrics.
+    Args:
+        mean_wf (NDArray[np.float_]): Array of mean waveforms.
+        cl_good (NDArray[np.bool_]): Array indicating whether each waveform is good or not.
+        channel_pos (NDArray[np.float_]): Array of channel positions.
+        minThreshDetectPeaksTroughs (float, optional): Minimum threshold to detect peaks and troughs. Defaults to 0.2.
+    Returns:
+        Tuple[NDArray[int], NDArray[int], NDArray[float], NDArray[float]]: A tuple containing the following metrics:
+            - num_peaks: Array of the number of peaks for each waveform.
+            - num_troughs: Array of the number of troughs for each waveform.
+            - wf_durs: Array of waveform durations for each waveform.
+            - spat_decays: Array of spatial decay values for each waveform.
+    """
     peak_chans = np.argmax(np.max(np.abs(mean_wf), axis=-1), axis=-1)
     peak_chans[peak_chans >= 383] = 382
 

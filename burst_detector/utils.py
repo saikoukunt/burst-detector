@@ -11,7 +11,10 @@ from typing import Any
 import cupy as cp
 import numpy as np
 from numpy.typing import NDArray
+from scipy.stats import wasserstein_distance
 from tqdm import tqdm
+
+import burst_detector as bd
 
 logger = logging.getLogger("burst-detector")
 
@@ -32,6 +35,13 @@ def find_times_multi(
         sp_times (NDArray): Spike times (in any unit of time).
         sp_clust (NDArray): Spike cluster assignments.
         clust_ids (NDArray): Clusters for which spike times should be returned.
+        max_spikes (int): The maximum number of spikes to return for each cluster.
+        data (NDArray): Ephys data with shape (# of timepoints, # of channels).
+            Should be passed in as an np.memmap for large datasets.
+        pre_samples (int): The number of samples to extract before the peak of the
+            spike. Defaults to 20.
+        post_samples (int): The number of samples to extract after the peak of the
+            spike. Defaults to 62.
 
     Returns:
         cl_times (list): found cluster spike times.
@@ -97,7 +107,7 @@ def extract_spikes(
     spikes are extracted instead.
 
     Args:
-        data` (NDArray): Ephys data with shape (# of timepoints, # of channels).
+        data (NDArray): Ephys data with shape (# of timepoints, # of channels).
             Should be passed in as an np.memmap for large datasets.
         times_multi (list): Spike times indexed by cluster id.
         clust_id (list): The cluster to extract spikes from
@@ -136,7 +146,7 @@ def calc_mean_and_std_wf(
     spike_times: list[NDArray[np.int_]],
     data: NDArray[np.int_],
     return_spikes: bool = False,
-) -> NDArray:
+) -> tuple[NDArray, NDArray, dict[int, NDArray]]:
     """
     Calculate mean waveform and std waveform for each cluster. Need to have loaded some metrics. If return_spikes is True, also returns the spike waveforms.
     Use GPU acceleration with cupy.
@@ -215,26 +225,23 @@ def get_closest_channels(
     """
     Gets the channels closest to a specified channel on the probe.
 
-    ### Args:
-        - `channel_positions` (np.ndarray): The XY coordinates of each channel on the
+    Args:
+        channel_positions (NDArray): The XY coordinates of each channel on the
             probe (in arbitrary units)
-        - `ref_chan` (int): The index of the channel to calculate distances relative to.
-        - `num_close` (int, optional): The number of closest channels to return,
+        ref_chan (int): The index of the channel to calculate distances relative to.
+        num_close (int, optional): The number of closest channels to return,
             including `ref_chan`.
 
-    ### Returns:
-        - `close_chans` (np.ndarray): The indices of the closest channels, sorted from
+    Returns:
+        close_chans (NDArray): The indices of the closest channels, sorted from
             closest to furthest. Includes the ref_chan.
 
     """
-    x: NDArray[np.float_] = channel_positions[:, 0]
-    y: NDArray[np.float_] = channel_positions[:, 1]
-    x0: float
-    y0: float
+    x, y = channel_positions[:, 0], channel_positions[:, 1]
     x0, y0 = channel_positions[ref_chan]
 
     dists: NDArray[np.float_] = (x - x0) ** 2 + (y - y0) ** 2
-    close_chans: NDArray[np.int_] = np.argsort(dists)
+    close_chans = np.argsort(dists)
     if num_close:
         close_chans = close_chans[:num_close]
     return close_chans
@@ -246,17 +253,17 @@ def find_best_channels(
     """
     For a given waveform, finds the channels with the largest amplitude.
 
-    ### Args:
-        - `template` (np.ndarray): The waveform to find the best channels for.
-        - `channel_pos` (np.ndarray): The XY coordinates of each channel on the probe
+    Args:
+        template (NDArray): The waveform to find the best channels for.
+        channel_pos (NDArray): The XY coordinates of each channel on the probe
             (in arbitrary units).
-        - `num_close` (int): The number of closest channels to return, including the
+        num_close (int): The number of closest channels to return, including the
             peak channel (channel with largest amplitude).
 
-    ### Returns:
-        - `close_chans` (np.ndarray): The indices of the closest channels, sorted
+    Returns:
+        close_chans (NDArray): The indices of the closest channels, sorted
             from closest to furthest. Includes the peak channel.
-        - `peak_chan` (int): The index of the peak channel.
+        peak_chan (int): The index of the peak channel.
 
     """
     amplitude: NDArray[np.float_] = template.max(axis=1) - template.min(axis=1)
@@ -296,3 +303,91 @@ def get_dists(
     dists: NDArray[np.float_] = (x - x0) ** 2 + (y - y0) ** 2
     dists = dists[target_chans]
     return dists
+
+
+def calc_fr_unif(
+    spike_times: list[np.int_],
+    old2new: dict[int, int],
+    new2old: dict[int, list[int]],
+    times_multi: list[NDArray[np.int_]],
+) -> tuple[NDArray, NDArray]:
+    """
+    Calculate firing rate uniformity metrics for spike trains.
+    Args:
+        spike_times (list): List of spike times for each cluster.
+        old2new (dict): Dictionary mapping old cluster IDs to new cluster IDs.
+        new2old (dict): Dictionary mapping new cluster IDs to old cluster IDs.
+        times_multi (dict): Dictionary mapping cluster IDs to spike times.
+    Returns:
+        single_ds (NDArray): Array of firing rate uniformity metrics for individual clusters.
+        merged_ds (NDArray): Array of firing rate uniformity metrics for merged clusters.
+    """
+    merged_ds = np.zeros(len(new2old.keys()))
+    for i in range(len(new2old.keys())):
+        spike_times = []
+        for clust in new2old[list(new2old.keys())[i]]:
+            spike_times.append(times_multi[clust])
+
+        spike_times = np.concatenate(spike_times)
+        c1, _ = bd.bin_spike_trains(spike_times, spike_times, 20)
+        n = c1.shape[0]
+        merged_ds[i] = 1 - wasserstein_distance(
+            u_values=np.arange(n) / n,
+            v_values=np.arange(n) / n,
+            u_weights=c1,
+            v_weights=np.ones(n),
+        )
+
+    single_ds = np.zeros(len(old2new.keys()))
+    for i in range(len(old2new.keys())):
+        clust = int(list(old2new.keys())[i])
+        spike_times = times_multi[clust]
+        c1, _ = bd.bin_spike_trains(spike_times, spike_times, 20)
+        n = c1.shape[0]
+        single_ds[i] = 1 - wasserstein_distance(
+            u_values=np.arange(n) / n,
+            v_values=np.arange(n) / n,
+            u_weights=c1,
+            v_weights=np.ones(n),
+        )
+
+    return single_ds, merged_ds
+
+
+def temp_mismatch(
+    clust_id: int,
+    templates: list,
+    channel_pos: NDArray[np.float_],
+    mean_wf: NDArray[np.float_],
+) -> float:
+    """
+    Calculate the temporal mismatch between the proximity ranks and amplitude ranks of a given cluster.
+    Args:
+        clust_id (int): The ID of the cluster.
+        templates (list): List of templates.
+        channel_pos (NDArray): Array of channel positions.
+        mean_wf (NDArray): Array of mean waveforms.
+    Returns:
+        mismatch (float): The magnitude and direction of the temporal mismatch.
+    """
+    ch_ids, peak_channel = find_best_channels(templates[clust_id])
+
+    # calculate and rank distances (proximity)
+    dists = get_dists(channel_pos, peak_channel, ch_ids)
+    prox_order = np.argsort(dists)
+    prox_ranks = np.argsort(prox_order)
+
+    # calculate and rank amplitudes
+    means = mean_wf[clust_id, ch_ids, :]
+    amp = means.max(axis=1) - means.min(axis=1)
+    amp_order = np.argsort(amp)
+    amp_ranks = np.argsort(amp_order)
+
+    # calculate magnitude and direction of mismatch
+    mismatch = np.abs(
+        (prox_ranks[prox_order] - amp_ranks[prox_order])[
+            int(ch_ids.shape[0] / 2) :
+        ].sum()
+        / 26
+    )  # 26 is maximum possible raw mismatch
+    return mismatch

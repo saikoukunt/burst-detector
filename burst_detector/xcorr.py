@@ -7,9 +7,6 @@ import math
 import numpy as np
 import scipy
 from numpy.typing import NDArray
-from torch import int32
-
-import burst_detector as bd
 
 
 def bin_spike_trains(
@@ -18,12 +15,14 @@ def bin_spike_trains(
     """
     Splits two input spike trains into bins.
 
-    ### Args:
-        - `c1_times`, `c2_times` (np.ndarray): The spike trains in seconds.
-        - `bin_width` (float): The width of bins in seconds.
+    Args:
+        c1_times (NDArray): Spike trains in seconds.
+        c2_times (NDArray): Spike trains in seconds.
+        bin_width (float): The width of bins in seconds.
 
-    ### Returns:
-        - `c1_counts`, `c2_counts` (np.ndarray): The binned spike counts.
+    Returns:
+        c1_counts (NDArray): Binned spike counts
+        c2_counts (NDArray): Binned spike counts.
     """
     c1_counts: NDArray[np.float_] = np.zeros(
         (math.ceil(max(c1_times) / bin_width)), dtype="int32"

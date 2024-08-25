@@ -14,7 +14,7 @@ import burst_detector as bd
 logger = logging.getLogger("burst-detector")
 
 
-def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
+def run_merge(params: dict[str, Any]) -> tuple[str, str, str, str, str, int, int]:
     if not torch.cuda.is_available():
         logger.warning("CUDA not available, running on CPU.")
 
@@ -133,7 +133,7 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     elif params["sim_type"] == "mean":
         # Calculate similarity using inner products between waveforms.
         sim, _, _, mean_wf, pass_ms = bd.calc_mean_sim(
-            data, times_multi, clusters, counts, n_clust, cl_labels, mean_wf, params
+            clusters, counts, n_clust, cl_labels, mean_wf, params
         )
         sim[pass_ms == False] = 0
     pass_ms = sim > params["sim_thresh"]
@@ -149,9 +149,7 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     xcorr_time: str = time.strftime("%H:%M:%S", time.gmtime(t4 - t1))
     # Calculate a refractor period penalty.
     logger.info("Calculating refractory period penalty...")
-    ref_pen, _ = bd.calc_ref_p(
-        times_multi, clusters, n_clust, pass_ms, xcorr_sig, params
-    )
+    ref_pen, _ = bd.calc_ref_p(times_multi, n_clust, pass_ms, xcorr_sig, params)
     t5: float = time.time()
     ref_pen_time: str = time.strftime("%H:%M:%S", time.gmtime(t5 - t4))
 
@@ -171,9 +169,7 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
 
     # Calculate/perform merges.
     logger.info("Merging...")
-    old2new, new2old = bd.merge_clusters(
-        clusters, counts, mean_wf, final_metric, params
-    )
+    old2new, new2old = bd.merge_clusters(clusters, mean_wf, final_metric, params)
 
     t6: float = time.time()
     merge_time: str = time.strftime("%H:%M:%S", time.gmtime(t6 - t5))

@@ -12,21 +12,19 @@ def base_algo(
     Uses the original Kleinberg algorithm to estimate the optimal HMM state sequence,
     and returns an interpretable output.
 
-    ### Args:
-    - `spike_times` (np.ndarray): Spike times in seconds.
-    - `state_ratio` (float): The geometric ratio between the firing rates of
-        adjacent HMM states. Defaults to 5, which seems appropriate empirically.
-    - `gamma` (float): The cost coefficient of state transitions. Transition cost
-        is 0 if transitioning to a lower state and gamma*(j-i) if transitioning
-        to a higher state. Defaults to 0.3, which seems appropriate empirically.
+    Args:
+        spike_times (NDArray): Spike times in seconds.
+        state_ratio (float): The geometric ratio between the firing rates of
+            adjacent HMM states. Defaults to 5, which seems appropriate empirically.
+        gamma (float): The cost coefficient of state transitions. Transition cost
+            is 0 if transitioning to a lower state and gamma*(j-i) if transitioning
+            to a higher state. Defaults to 0.3, which seems appropriate empirically.
 
-    ### Returns:
-        - `bursts` (pd.DataFrame): Onset and offsets of detected bursts.
-        - `q` (np.ndarray): The inferred optimal state sequence.
+    Returns:
+        bursts (pd.DataFrame): Onset and offsets of detected bursts.
+        q (NDArray): The inferred optimal state sequence.
     """
-    q: NDArray[np.int_]
-    a: NDArray[np.float_]
-    q, a = find_sequence(spike_times, state_ratio, gamma)
+    q, _ = find_sequence(spike_times, state_ratio, gamma)
     bursts: pd.DataFrame = create_output(spike_times, q)
     return bursts, q
 
@@ -41,22 +39,20 @@ def find_bursts(
     Uses our EM-Kleinberg algorithm to iteratively estimate HMM state firing rates
     and the optimal state sequence, and returns an interpretable output.
 
-    ### Args:
-        - `spike_times` (np.ndarray): Spike times in seconds.
-        - `state_ratio` (float): The geometric ratio between the firing rates of
+    Args:
+        spike_times (NDArray): Spike times in seconds.
+        state_ratio (float): The geometric ratio between the firing rates of
             adjacent HMM states. Defaults to 5, which seems appropriate empirically.
-        - `gamma` (float): The cost coefficient of state transitions. Transition cost
+        gamma (float): The cost coefficient of state transitions. Transition cost
             is 0 if transitioning to a lower state and gamma*(j-i) if transitioning
             to a higher state. Defaults to 0.3, which seems appropriate empirically.
-        - `max_iter` (int): The maximum number of EM iterations to run. Defaults to 5.
+        max_iter (int): The maximum number of EM iterations to run. Defaults to 5.
 
-    ### Returns:
-        - `bursts` (pd.DataFrame): Onset and offsets of detected bursts.
-        - `q` (np.ndarray): The inferred optimal state sequence.
-        - `a` (np.ndarray): The inferred HMM state firing rates.
+    Returns:
+        bursts (pd.DataFrame): Onset and offsets of detected bursts.
+        q (NDArray): The inferred optimal state sequence.
+        a (NDArray): The inferred HMM state firing rates.
     """
-    q: NDArray[np.int_]
-    a: NDArray[np.float_]
     q, a = find_sequence(spike_times, state_ratio, gamma)
     gaps: NDArray[np.float_] = np.diff(spike_times)
 
@@ -100,18 +96,18 @@ def find_sequence(
     """
     Infers the optimal state sequence of Kleinberg HMM bursting states.
 
-    ### Args:
-        - `spike_times` (np.ndarray): Spike times in seconds.
-        - `state_ratio` (float): The geometric ratio between the firing rates of
+    Args:
+        spike_times (NDArray): Spike times in seconds.
+        state_ratio (float): The geometric ratio between the firing rates of
             adjacent HMM states.
-        - `gamma` (float): The cost coefficient of state transitions. Transition cost
+        gamma (float): The cost coefficient of state transitions. Transition cost
             is 0 if transitioning to a lower state and gamma*(j-i) if transitioning
             to a higher state.
-        - `frs` (np.ndarray, optional): Preset firing rates for each state.
+        frs (NDArray, optional): Preset firing rates for each state.
 
-    ### Returns:
-        - `q` (np.ndarray): The inferred optimal state sequence.
-        - `frs` (np.ndarray): HMM state firing rates. This is the same as the input
+    Returns:
+        q (NDArray): The inferred optimal state sequence.
+        frs (NDArray): HMM state firing rates. This is the same as the input
             parameter if provided. Otherwise, it is calculated from the baseline
             spike rate and `state_ratio`.
     """
@@ -174,12 +170,12 @@ def create_output(spike_times: NDArray[np.float_], q: NDArray[np.int_]) -> pd.Da
     Finds bursts (continuous portions with the same state) from an inferred state
     sequence.
 
-    ### Args:
-        - `spike_times` (np.ndarray): Spike times in seconds.
-        - `q` (np.ndarray): Inferred state sequence.
+    Args:
+        spike_times (NDArray): Spike times in seconds.
+        q (NDArray): Inferred state sequence.
 
-    ### Returns:
-        - `bursts` (pd.DataFrame): Onset and offsets of detected bursts.
+    Returns:
+        bursts (pd.DataFrame): Onset and offsets of detected bursts.
     """
     # calculate output size
     prev_q = -1

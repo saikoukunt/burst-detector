@@ -8,7 +8,9 @@ data
 *.dat
 *checkpoint.ipynb
 *.DS_Store
+*.code-workspace
 json_files/
 figures/
 notebooks/
 results/
+gui/
