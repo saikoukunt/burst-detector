@@ -1,31 +1,36 @@
-import sys
-import os
-from PyQt5 import QtWidgets as qtw
-from PyQt5 import QtGui as qtg
-from PyQt5 import QtCore as qtc
-from pyqtgraph import TableWidget
-from pyqtgraph.dockarea import DockArea
-import pyqtgraph.dockarea
-from functools import partial
-import numpy as np
-import burst_detector as bd
-import pandas as pd
+import logging
 import warnings
 from functools import partial
-from stylesheets import DOCK_TITLE_STYLESHEET, DOCK_LABEL_STYLESHEET, DOCK_LABEL_DIM_STYLESHEET, DOCK_STATUS_STYLESHEET
+
+import pyqtgraph.dockarea
+from PyQt5 import QtCore as qtc
+from PyQt5 import QtGui as qtg
+from PyQt5 import QtWidgets as qtw
+from pyqtgraph.dockarea import DockArea
+from stylesheets import (
+    DOCK_LABEL_DIM_STYLESHEET,
+    DOCK_LABEL_STYLESHEET,
+    DOCK_STATUS_STYLESHEET,
+    DOCK_TITLE_STYLESHEET,
+)
+
+logger = logging.getLogger("burst-detector")
+
 
 def _widget_position(widget):  # pragma: no cover
     return widget.parentWidget().mapToGlobal(widget.geometry().topLeft())
 
+
 # redefining pyqtgraph class so color can be changed
 class DropAreaOverlay(qtw.QWidget):
     """Overlay widget that draws drop areas during a drag-drop operation"""
+
     def __init__(self, parent):
         qtw.QWidget.__init__(self, parent)
         self.dropArea = None
         self.hide()
         self.setAttribute(qtc.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        
+
     def setDropArea(self, area):
         self.dropArea = area
         if area is None:
@@ -37,22 +42,22 @@ class DropAreaOverlay(qtw.QWidget):
             rgn = qtc.QRect(prgn)
             w = min(30, int(prgn.width() / 3))
             h = min(30, int(prgn.height() / 3))
-            
-            if self.dropArea == 'left':
+
+            if self.dropArea == "left":
                 rgn.setWidth(w)
-            elif self.dropArea == 'right':
+            elif self.dropArea == "right":
                 rgn.setLeft(rgn.left() + prgn.width() - w)
-            elif self.dropArea == 'top':
+            elif self.dropArea == "top":
                 rgn.setHeight(h)
-            elif self.dropArea == 'bottom':
+            elif self.dropArea == "bottom":
                 rgn.setTop(rgn.top() + prgn.height() - h)
-            elif self.dropArea == 'center':
+            elif self.dropArea == "center":
                 rgn.adjust(w, h, -w, -h)
             self.setGeometry(rgn)
             self.show()
 
         self.update()
-    
+
     def paintEvent(self, ev):
         if self.dropArea is None:
             return
@@ -64,14 +69,21 @@ class DropAreaOverlay(qtw.QWidget):
         p.drawRect(rgn)
         p.end()
 
+
 # redefining pyqtgraph class to change style and label height
 class DockLabel(pyqtgraph.dockarea.DockLabel):
-    def __init__(self, text, closable=False, fontSize="12px", 
-                 ss= DOCK_LABEL_STYLESHEET,dim_ss = DOCK_LABEL_DIM_STYLESHEET):
+    def __init__(
+        self,
+        text,
+        closable=False,
+        fontSize="12px",
+        ss=DOCK_LABEL_STYLESHEET,
+        dim_ss=DOCK_LABEL_DIM_STYLESHEET,
+    ):
         self.ss = ss
         self.dim_ss = dim_ss
         super().__init__(text, closable, fontSize)
-  
+
     def updateStyle(self):
         self.setStyleSheet(self.ss) if not self.dim else self.setStyleSheet(self.dim_ss)
 
@@ -83,30 +95,50 @@ class DockLabel(pyqtgraph.dockarea.DockLabel):
             warnings.simplefilter("ignore")
             self.hint = p.drawText(rgn, align, self.text())
         p.end()
-        
-        self.setFixedHeight(self.hint.height()+10)
+
+        self.setFixedHeight(self.hint.height() + 10)
+
 
 class Dock(pyqtgraph.dockarea.Dock):
     confirm_before_close_view = True
 
-    def __init__(self, name, area=None, widget=None, hideTitle=False, autoOrientation=False, label=None, closable=False, **kargs):
-        super().__init__(name, 
-                         area,  
-                         widget=widget, 
-                         hideTitle=hideTitle, 
-                         autoOrientation=autoOrientation, 
-                         label=label, 
-                         **kargs)
+    def __init__(
+        self,
+        name,
+        area=None,
+        widget=None,
+        hideTitle=False,
+        autoOrientation=False,
+        label=None,
+        closable=False,
+        **kargs
+    ):
+        super().__init__(
+            name,
+            area,
+            widget=widget,
+            hideTitle=hideTitle,
+            autoOrientation=autoOrientation,
+            label=label,
+            **kargs
+        )
         self._widget = widget
         self._dock_widgets = {}
         self.closable = closable
         self.label = label
 
     def add_button(
-            self,  callback=None, text=None, icon=None, checkable=False,
-            checked=False, event=None, name=None):
-        
-        name = name or getattr(callback, '__name__', None) or text
+        self,
+        callback=None,
+        text=None,
+        icon=None,
+        checkable=False,
+        checked=False,
+        event=None,
+        name=None,
+    ):
+
+        name = name or getattr(callback, "__name__", None) or text
         assert name
         button = qtw.QPushButton(chr(int(icon, 16)) if icon else text)
         button.setCheckable(checkable)
@@ -162,22 +194,23 @@ class Dock(pyqtgraph.dockarea.Dock):
 
     def _default_buttons(self):
         if self.closable:
-            self.add_button(callback=self.close, name='close', text='✕')
+            self.add_button(callback=self.close, name="close", text="✕")
 
         def on_view_menu():
-            button = self._dock_widgets['view_menu']
+            button = self._dock_widgets["view_menu"]
             x = _widget_position(button).x()
             y = _widget_position(self._widget).y()
-            self._menu.exec(qtc.QPoint(x,y))
-        self.add_button(callback=on_view_menu, name='view_menu', text="Menu")
+            self._menu.exec(qtc.QPoint(x, y))
+
+        self.add_button(callback=on_view_menu, name="view_menu", text="Menu")
 
     def get_widget(self, name):
         return self._dock_widgets[name]
-    
+
     @property
     def status(self):
         return self._status.text()
-    
+
     def set_status(self, text):
         self._status.setText(text)
 
@@ -192,10 +225,15 @@ class Dock(pyqtgraph.dockarea.Dock):
             self.widgetArea.setStyleSheet(self.hStyle)
         pass
 
+
 def _create_dock(name, widget, closable=False):
 
-    label = DockLabel(name, closable=False) # closable always false, we make our own close button
-    dock = Dock(name, widget=widget, label=label, autoOrientation=False, closable=closable)
+    label = DockLabel(
+        name, closable=False
+    )  # closable always false, we make our own close button
+    dock = Dock(
+        name, widget=widget, label=label, autoOrientation=False, closable=closable
+    )
 
     dock._create_menu()
     dock._create_title_bar()
@@ -208,8 +246,8 @@ def _create_dock(name, widget, closable=False):
 
     widget_layout.addWidget(dock._title_bar, 1)
     widget_layout.addWidget(dock.widgetArea, 100)
-    # status bar 
-    dock._status = qtw.QLabel('')
+    # status bar
+    dock._status = qtw.QLabel("")
     dock._status.setMaximumHeight(30)
     dock._status.setStyleSheet(DOCK_STATUS_STYLESHEET)
     widget_layout.addWidget(dock._status, 1)
@@ -230,13 +268,20 @@ def _create_dock(name, widget, closable=False):
 
     return dock
 
+
 class MainWindow(qtw.QMainWindow):
     "Main application window"
 
     def __init__(
-            self, controller, position=None, size=None, name=None, subtitle=None, enable_threading=True
-            ):
-        
+        self,
+        controller,
+        position=None,
+        size=None,
+        name=None,
+        subtitle=None,
+        enable_threading=True,
+    ):
+
         self.controller = controller
         self._closed = False
         self._enable_threading = enable_threading
@@ -244,8 +289,8 @@ class MainWindow(qtw.QMainWindow):
             raise RuntimeError("A Qt application must be created.")
         super().__init__()
 
-        self._set_name(name, str(subtitle or ''))
-        position = position or (200,200)
+        self._set_name(name, str(subtitle or ""))
+        position = position or (200, 200)
         size = size or (800, 600)
         self._set_pos_size(position, size)
 
@@ -262,47 +307,59 @@ class MainWindow(qtw.QMainWindow):
         self.show()
 
     def a(self, s):
-        print(s)
+        logger.info(s)
 
     def _create_menu(self):
         menu_bar = self.menuBar()
 
         # File
         self.file_menu = menu_bar.addMenu("File")
-        self.file_menu.addAction('Load Recording', self.controller.load_recording, qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.Key_O))
+        self.file_menu.addAction(
+            "Load Recording",
+            self.controller.load_recording,
+            qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.Key_O),
+        )
 
         # Edit
-        self.edit_menu = menu_bar.addMenu('Edit')
-        self.edit_menu.addAction('Merge', self.controller.merge, qtg.QKeySequence(qtc.Qt.Key_G))
+        self.edit_menu = menu_bar.addMenu("Edit")
+        self.edit_menu.addAction(
+            "Merge", self.controller.merge, qtg.QKeySequence(qtc.Qt.Key_G)
+        )
         self.edit_menu.addSeparator()
 
         self.add_cur_menu("Move selected", "good", "selected", qtc.Qt.Key_G)
         self.add_cur_menu("Move selected", "mua", "selected", qtc.Qt.Key_M)
         self.add_cur_menu("Move selected", "noise", "selected", qtc.Qt.Key_N)
 
-        self.edit_menu.addAction('Move selected to unsorted', 
-            partial(self.controller.label_clusters, grp='selected', label='unsorted'),
-            qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.Key_U))
+        self.edit_menu.addAction(
+            "Move selected to unsorted",
+            partial(self.controller.label_clusters, grp="selected", label="unsorted"),
+            qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.Key_U),
+        )
 
         self.edit_menu.addSeparator()
-        self.edit_menu.addAction('Move all to good', 
-            partial(self.controller.label_clusters, 'all',label='good'),
-            qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.ALT + qtc.Qt.Key_G)
+        self.edit_menu.addAction(
+            "Move all to good",
+            partial(self.controller.label_clusters, "all", label="good"),
+            qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.ALT + qtc.Qt.Key_G),
         )
-        self.edit_menu.addAction('Move all to mua', 
-            partial(self.controller.label_clusters, 'all',label='mua'),
-            qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.ALT + qtc.Qt.Key_M)
+        self.edit_menu.addAction(
+            "Move all to mua",
+            partial(self.controller.label_clusters, "all", label="mua"),
+            qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.ALT + qtc.Qt.Key_M),
         )
-        self.edit_menu.addAction('Move all to noise', 
-            partial(self.controller.label_clusters, 'all',label='noise'),
-            qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.ALT + qtc.Qt.Key_N)
+        self.edit_menu.addAction(
+            "Move all to noise",
+            partial(self.controller.label_clusters, "all", label="noise"),
+            qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.ALT + qtc.Qt.Key_N),
         )
-        self.edit_menu.addAction('Move all to unsorted', 
-            partial(self.controller.label_clusters, 'all',label='unsorted'),
-            qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.ALT + qtc.Qt.Key_U)
+        self.edit_menu.addAction(
+            "Move all to unsorted",
+            partial(self.controller.label_clusters, "all", label="unsorted"),
+            qtg.QKeySequence(qtc.Qt.CTRL + qtc.Qt.ALT + qtc.Qt.Key_U),
         )
         self.edit_menu.addSeparator()
-        self.edit_menu.addAction('Filter with condition file')
+        self.edit_menu.addAction("Filter with condition file")
 
         # Extensions
         self.ext_menu = menu_bar.addMenu("Extensions")
@@ -318,53 +375,67 @@ class MainWindow(qtw.QMainWindow):
         buttonBox = qtw.QDialogButtonBox(QBtn)
 
         layout = qtw.QGridLayout()
-        layout.addWidget(buttonBox, 10,  3)
+        layout.addWidget(buttonBox, 10, 3)
         layout.addWidget(qtw.QPushButton("Advanced >>"), 10, 0)
         label = qtw.QLabel("Probe layout")
         label.setToolTip("Path to probe channel map")
-        layout.addWidget(label,0,0)
+        layout.addWidget(label, 0, 0)
         layout.addWidget(qtw.QLineEdit(""), 0, 1)
 
-        layout.addWidget(qtw.QLabel("Time range"),0,2)
+        layout.addWidget(qtw.QLabel("Time range"), 0, 2)
         layout.addWidget(qtw.QLineEdit(""), 0, 3)
 
-
-        layout.addWidget(qtw.QLabel("N blocks for registration"),1,0)
+        layout.addWidget(qtw.QLabel("N blocks for registration"), 1, 0)
         layout.addWidget(qtw.QLineEdit(""), 1, 1)
 
-        layout.addWidget(qtw.QLabel("Threshold"),1,2)
+        layout.addWidget(qtw.QLabel("Threshold"), 1, 2)
         layout.addWidget(qtw.QLineEdit(""), 1, 3)
 
-        layout.addWidget(qtw.QLabel("Lambda"),2,0)
+        layout.addWidget(qtw.QLabel("Lambda"), 2, 0)
         layout.addWidget(qtw.QLineEdit(""), 2, 1)
 
-        layout.addWidget(qtw.QLabel("AUC for splits"),2,2)
+        layout.addWidget(qtw.QLabel("AUC for splits"), 2, 2)
         layout.addWidget(qtw.QLineEdit(""), 2, 3)
-
 
         dialog.setLayout(layout)
         dialog.exec()
 
-    
     def add_cur_menu(self, stem, label, grp, key):
         menu = self.edit_menu.addMenu(stem + " to " + label)
-        menu.addAction("No curation label",
+        menu.addAction(
+            "No curation label",
             partial(self.controller.label_clusters, grp=grp, label=label),
-            qtg.QKeySequence(qtc.Qt.CTRL + key))
+            qtg.QKeySequence(qtc.Qt.CTRL + key),
+        )
         menu.addSeparator()
         add_sep = menu.addSeparator()
-        menu.addAction("Add curation label...",
-            partial(self.add_cur_label, menu=menu, grp=grp, label=label, add_sep=add_sep))
-    
+        menu.addAction(
+            "Add curation label...",
+            partial(
+                self.add_cur_label, menu=menu, grp=grp, label=label, add_sep=add_sep
+            ),
+        )
+
     def add_cur_label(self, menu, grp, label, add_sep):
-        cur_label, ok = qtw.QInputDialog.getText(self, "Add curation label", "Add a new curation label for %s clusters" % label)
+        cur_label, ok = qtw.QInputDialog.getText(
+            self,
+            "Add curation label",
+            "Add a new curation label for %s clusters" % label,
+        )
         if ok:
             cur_act = qtw.QAction(cur_label, parent=menu)
-            cur_act.triggered.connect(partial(self.controller.label_clusters, grp=grp, label=label, cur_label=cur_label))
+            cur_act.triggered.connect(
+                partial(
+                    self.controller.label_clusters,
+                    grp=grp,
+                    label=label,
+                    cur_label=cur_label,
+                )
+            )
 
             # shortcut
             shortcut, ok = get_key_sequence(cur_label)
-            print(ok)
+            logger.info(ok)
             if ok:
                 cur_act.setShortcut(shortcut)
 
@@ -373,7 +444,7 @@ class MainWindow(qtw.QMainWindow):
     def _set_name(self, name, subtitle):
         if name is None:
             name = self.__class__.__name__
-        title = name if not subtitle else name + ' - ' + subtitle
+        title = name if not subtitle else name + " - " + subtitle
         self.setWindowTitle(title)
         self.setObjectName(name)
 
@@ -385,6 +456,7 @@ class MainWindow(qtw.QMainWindow):
         if size is not None:
             self.resize(qtc.QSize(size[0], size[1]))
 
+
 # TODO: keep track of all used shortcuts, make sure no duplicate shortcuts are created
 def get_key_sequence(action):
     dialog = qtw.QDialog()
@@ -395,13 +467,15 @@ def get_key_sequence(action):
     kedit = KeySequenceEdit(qtg.QKeySequence())
     form.addRow(kedit)
 
-    buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Ok | qtw.QDialogButtonBox.Cancel, qtc.Qt.Horizontal)
+    buttons = qtw.QDialogButtonBox(
+        qtw.QDialogButtonBox.Ok | qtw.QDialogButtonBox.Cancel, qtc.Qt.Horizontal
+    )
     form.addRow(buttons)
 
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
 
-    if (dialog.exec() == qtw.QDialog.Accepted):
+    if dialog.exec() == qtw.QDialog.Accepted:
         return kedit.keySequence, True
     else:
         return 0, False
@@ -426,10 +500,12 @@ class KeySequenceEdit(qtw.QLineEdit):
                 warnings.warn("Unknown key from a macro probably")
                 return
 
-            if(key == qtc.Qt.Key_Control or
-            key == qtc.Qt.Key_Shift or
-            key == qtc.Qt.Key_Alt or
-            key == qtc.Qt.Key_Meta):
+            if (
+                key == qtc.Qt.Key_Control
+                or key == qtc.Qt.Key_Shift
+                or key == qtc.Qt.Key_Alt
+                or key == qtc.Qt.Key_Meta
+            ):
                 return
 
             # check for a combination of user clicks
@@ -448,10 +524,6 @@ class KeySequenceEdit(qtw.QLineEdit):
 
             self.setKeySequence(qtg.QKeySequence(key))
 
-    
-    #--------------------------------------------------------
+    # --------------------------------------------------------
     # Public Methods
-    #--------------------------------------------------------
-
-
-
+    # --------------------------------------------------------

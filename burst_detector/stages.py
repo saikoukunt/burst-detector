@@ -1,5 +1,6 @@
 import functools
 import itertools
+import logging
 import math
 from collections import deque
 from typing import Any, Callable
@@ -10,15 +11,15 @@ import pandas as pd
 import scipy.spatial.distance as dist
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from multiprocess.pool import ThreadPool as Pool
 from numpy.typing import NDArray
 from scipy.stats import wasserstein_distance
 from sklearn.neighbors import NearestNeighbors
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import burst_detector as bd
+
+logger = logging.getLogger("burst-detector")
 
 
 def calc_mean_sim(
@@ -168,7 +169,7 @@ def calc_ae_sim(
             spk_lat[start_idx:end_idx] = out.cpu().detach().numpy()
             spk_lab[start_idx:end_idx] = lab.cpu().detach().numpy()
 
-    print(f"Average Loss: {loss/len(dl):.4f}")
+    logger.info(f"Average Loss: {loss/len(dl):.4f}")
 
     # construct dataframes with peak channel
     ae_df = pd.DataFrame({"cluster_id": spk_lab})
@@ -231,8 +232,6 @@ def calc_cross_sim(spikes, offset, mean_wf, wf_norms, pass_ms, n_clust):
         for c2 in range(c1 + 1, n_clust):
             if pass_ms[c1, c2]:
                 num += 1
-                # if (num % 50 == 0):
-                #     print(num)
 
                 # extract spikes
                 sp_1 = spikes[c1]

@@ -1,11 +1,15 @@
+import logging
 import math
 import os
 
 import numpy as np
 import pandas as pd
 from scipy import signal, stats
+from tqdm import tqdm
 
 import burst_detector as bd
+
+logger = logging.getLogger("burst-detector")
 
 
 # --------------------------------------------- DATA HANDLING HELPERS -------------------------------------------------
@@ -234,7 +238,7 @@ def calc_metrics(ks_folder, data_filepath, n_chan):
         params, n_clust, good_ids, times_multi, data, return_spikes=False
     )
 
-    print("calculating background standard deviation...")
+    logger.info("Calculating background standard deviation...")
     noise = extract_noise(data, times, 20, 62, n_chan=n_chan)
     noise_stds = np.std(noise, axis=1)
 
@@ -268,7 +272,7 @@ def calc_metrics(ks_folder, data_filepath, n_chan):
 
 def calc_SNR(data, mean_wf, noise_stds, cl_good):
 
-    print("calculating peak channels and amplitudes")
+    logger.info("Calculating peak channels and amplitudes")
     # calculate peak chans, amplitudes
     peak_chans = np.argmax(np.max(np.abs(mean_wf), axis=-1), axis=-1)
     peak_chans[peak_chans == 384] = 383
@@ -293,20 +297,15 @@ def max_cont(fr, rp, rec_dur, acc_cont):
 def calc_sliding_RP_viol(
     times_multi, cl_good, n_clust, bin_size=0.25, acceptThresh=0.25
 ):
-    print("calculating RP viol confs")
     b = np.arange(0, 10.25, bin_size) / 1000
     bTestIdx = np.array([1, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 36, 40], dtype="int8")
     bTest = [b[i] for i in bTestIdx]  # -1 bc 0th bin corresponds to 0-0.5 ms
 
     RP_conf = np.zeros(n_clust, dtype=np.float32)
 
-    for i in range(n_clust):
-        if i % 100 == 0:
-            print(i)
+    for i in tqdm(range(n_clust), desc="Calculating RP viol confs"):
         times = times_multi[i] / 30000
         if cl_good[i] and times.shape[0] > 1:
-            recDur = times[-1] - times[0]
-
             # calculate and avg halves of acg
             acg = auto_correlogram(times, 2, bin_size / 1000, 5 / 30000)
             half_len = int(acg.shape[0] / 2)
@@ -315,7 +314,6 @@ def calc_sliding_RP_viol(
 
             acg_cumsum = np.cumsum(acg)
             sum_res = acg_cumsum[bTestIdx - 1]
-            spk_cnt = times.shape[0]
 
             # calculate max violations per refractory period size
             num_bins_2s = acg.shape[0]
@@ -337,7 +335,6 @@ def calc_wf_shape_metrics(
 ):
     peak_chans = np.argmax(np.max(np.abs(mean_wf), axis=-1), axis=-1)
     peak_chans[peak_chans >= 383] = 382
-    amps = np.max(np.max(np.abs(mean_wf), axis=-1), axis=-1)
 
     num_peaks = np.zeros(mean_wf.shape[0], dtype="int8")
     num_troughs = np.zeros(mean_wf.shape[0], dtype="int8")
