@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 import numpy as np
@@ -6,6 +7,8 @@ import pandas as pd
 from argschema import ArgSchemaParser
 
 import burst_detector as bd
+
+logger = logging.getLogger("burst-detector")
 
 
 class Recording(object):
@@ -18,14 +21,14 @@ class Recording(object):
             json_file = open(os.path.join(self.ks_dir, "input.json"))
             self.params = json.load(json_file)
         except FileNotFoundError:
-            print("No JSON found, using default SpECtr parameters!")
+            logger.info("No JSON found, using default SpECtr parameters!")
             self.params = {}
 
         self.params = ArgSchemaParser(
             input_data=self.params, schema_type=bd.schemas.AutomergeGUIParams
         ).args
 
-        print(self.params)
+        logger.info(self.params)
 
         with open(filename, "r") as param_file:
             for line in param_file:
@@ -100,7 +103,7 @@ class Recording(object):
         # load cluster metrics
         self.cluster_metrics = self._load_cluster_metrics()
 
-        print("Loaded KS output from %s" % self.ks_dir)
+        logger.info(f"Loaded KS output from {self.ks_dir}")
 
     def _load_cluster_metrics(self):
         metrics = pd.DataFrame()
@@ -212,9 +215,7 @@ class Recording(object):
             temp += list(self.cl_templates[cl_list[i]])
 
         self.cl_templates[new_id] = temp
-        # self.cl_templates = np.concatenate((self.cl_templates, np.array(temp,dtype='int64')), axis=0)
-        # print(self.cl_templates)
-        print(self.cl_templates[new_id])
+        logger.info(self.cl_templates[new_id])
 
         # spikes
         temp = self.spikes[cl_list[0]]

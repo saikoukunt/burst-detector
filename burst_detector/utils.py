@@ -4,14 +4,16 @@ General utilities for ephys data-wrangling.
 Assumes that ephys data is stored in the phy output format.
 """
 
+import logging
 import os
 from typing import Any
 
 import cupy as cp
-import cupyx as cpx
 import numpy as np
 from numpy.typing import NDArray
 from tqdm import tqdm
+
+logger = logging.getLogger("burst-detector")
 
 
 def find_times_multi(
@@ -200,7 +202,7 @@ def calc_mean_and_std_wf(
             std_wf[i, :, :] = cp.std(spikes_cp, axis=0)
             spikes[i] = spikes_i
 
-        print("Saving mean and std waveforms...")
+        logger.info("Saving mean and std waveforms...")
         cp.save(mean_wf_path, mean_wf)
         cp.save(std_wf_path, std_wf)
 

@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any, Callable
 
@@ -11,6 +12,8 @@ from torch.utils.data import DataLoader, Dataset, Subset
 from tqdm import tqdm
 
 import burst_detector as bd
+
+logger = logging.getLogger("burst-detector")
 
 
 def generate_train_data(
@@ -56,11 +59,10 @@ def generate_train_data(
     # Load existing spike snippets
     spikes_path = os.path.join(params["KS_folder"], "automerge", "spikes.pt")
     if os.path.exists(spikes_path):
-        print("Loading existing spike snippets...")
+        logger.info("Loading existing spike snippets...")
         torch_data = torch.load(spikes_path)
         return torch_data["spikes"], torch_data["cl_ids"]
 
-    print("cuda: ", torch.cuda.is_available())
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Pre-compute the set of closest channels for each channel.
