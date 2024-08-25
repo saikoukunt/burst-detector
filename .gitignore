@@ -8,4 +8,7 @@ data
 *.dat
 *checkpoint.ipynb
 *.DS_Store
-json_files
+json_files/
+figures/
+notebooks/
+results/
