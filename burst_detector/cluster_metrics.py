@@ -13,13 +13,13 @@ def calc_wf_norms(wfs: NDArray[np.float_]) -> NDArray[np.float_]:
     """
     Calculates the Frobenius norm of each waveform in an array of waveforms.
 
-    ### Args:
-        - `wfs` (np.ndarray): Array containing waveforms. The first dimension of the
+    Args:
+        wfs (NDArray): Array containing waveforms. The first dimension of the
             array must index the  waveforms [i.e. shape = (# of waveforms, # channels,
             # timepoints) OR (# of waveforms, # timepoints, # channels)]
 
-    ### Returns:
-        -`wf_norm` (np.ndarray): Array of waveform norms.
+    Returns:
+        wf_norm (NDArray): Array of waveform norms.
     """
     wf_norms = np.zeros(wfs.shape[0])
 
@@ -39,23 +39,23 @@ def wf_means_similarity(
     Calculates the normalized pairwise similarity (inner product) between pairs of
     waveforms in an array of waveforms.
 
-    ### Args:
-        - `mean_wf` (np.ndarray): Array containing unnormalized waveforms. The first dim
+    Args:
+        mean_wf (NDArray): Array containing unnormalized waveforms. The first dim
             of the array must index the waveforms [i.e. shape = (# of waveforms,
             # channels, # timepoints) OR (# of waveforms, # timepoints, # channels)].
-        - `cl_good` (np.ndarray): Array containing cluster quality labels. Bad clusters
+        cl_good (NDArray): Array containing cluster quality labels. Bad clusters
             will be skipped during similarity calculations.
-        - `jitter` (bool): True if similarity calculations should check for time shifts
+        jitter (bool): True if similarity calculations should check for time shifts
             between waveforms. Defaults to False. Note that runtime scales linearly
             with jitter_amt if enabled.
-        - `jitter_amt` (int): The maximum amount of shift to search in both directions.
+        jitter_amt (int): The maximum amount of shift to search in both directions.
             Defaults to 4. Note that runtime scales linearly with jitter_amt if enabled.
 
-    ### Returns:
-        - `mean_sim` (np.ndarray): The (maximum) pairwise similarity for each pair of
+    Returns:
+        mean_sim (NDArray): The (maximum) pairwise similarity for each pair of
             (normalized) waveforms.
-        - `wf_norms` (np.ndarray): Calculated waveform norms.
-        - `shifts` (np.ndarray): If jitter is enabled, the shift that produces the
+        wf_norms (NDArray): Calculated waveform norms.
+        shifts (NDArray): If jitter is enabled, the shift that produces the
             max inner product for each pair of waveforms.
     """
     n_clust: int = mean_wf.shape[0]

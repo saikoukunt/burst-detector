@@ -1,11 +1,11 @@
 import os
+import sys
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 from argschema import ArgSchemaParser
 from matplotlib.backends.backend_pdf import PdfPages
-from numpy.typing import NDArray
 from tqdm import tqdm
 
 import burst_detector as bd
@@ -20,8 +20,8 @@ def main() -> None:
     if params.get("max_spikes") is None:
         params["max_spikes"] = 1000
 
-    os.makedirs(os.path.join(params["KS_folder"], "automerge"), exist_ok=True)
-    os.makedirs(os.path.join(params["KS_folder"], "automerge", "units"), exist_ok=True)
+    automerge = os.path.join(params["KS_folder"], "automerge")
+    os.makedirs(os.path.join(automerge, "units"), exist_ok=True)
 
     times = np.load(os.path.join(params["KS_folder"], "spike_times.npy")).flatten()
     clusters = np.load(
@@ -31,9 +31,7 @@ def main() -> None:
 
     # load recording
     rawData = np.memmap(params["data_filepath"], dtype=params["dtype"], mode="r")
-    data: NDArray[np.int_] = np.reshape(
-        rawData, (int(rawData.size / params["n_chan"]), params["n_chan"])
-    )
+    data = np.reshape(rawData, (int(rawData.size / params["n_chan"]), params["n_chan"]))
 
     # count spikes per cluster, load quality labels
     counts = bd.spikes_per_cluster(clusters, params["max_spikes"])
@@ -51,15 +49,17 @@ def main() -> None:
         wf_plot = bd.plot_wfs([id], mean_wf, std_wf, spikes)
         acg_plot = bd.plot_corr([id], times_multi, params)
 
-        name: str = os.path.join(params["KS_folder"], "automerge", f"units{id}.pdf")
-        file = PdfPages(name)
-        file.savefig(wf_plot, dpi=300)
-        file.savefig(acg_plot, dpi=300)
-        file.close()
+        name = os.path.join(params["KS_folder"], "automerge", f"units{id}.pdf")
+        with PdfPages(name) as file:
+            file.savefig(wf_plot, dpi=300)
+            file.savefig(acg_plot, dpi=300)
 
         plt.close(wf_plot)
         plt.close(acg_plot)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(1)

@@ -7,6 +7,7 @@ import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 from numpy.typing import NDArray
+from tqdm import tqdm
 
 import burst_detector as bd
 
@@ -40,21 +41,22 @@ def plot_merges(
         window_size (float, optional): Window size for correlation plot. Defaults to 0.102.
         bin_size (float, optional): Bin size for correlation plot. Defaults to 0.001.
     """
-    for merge in merges:
+    for merge in tqdm(merges, desc="Plotting merges"):
         merge.sort()
         wf_plot = plot_wfs(merge, mean_wf, std_wf, spikes, nchan, start, stop)
         corr_plot = plot_corr(merge, times_multi, params, window_size, bin_size)
 
+        merge_str = "_".join(map(str, merge))
         name = os.path.join(
             params["KS_folder"],
             "automerge",
             "merges",
-            "merge" + "".join(["_" + str(cl) for cl in merge]) + ".pdf",
+            f"merge_{merge_str}.pdf",
         )
-        file = PdfPages(name)
-        file.savefig(wf_plot, dpi=300)
-        file.savefig(corr_plot, dpi=300)
-        file.close()
+
+        with PdfPages(name) as file:
+            file.savefig(wf_plot, dpi=300)
+            file.savefig(corr_plot, dpi=300)
 
         plt.close(wf_plot)
         plt.close(corr_plot)
@@ -82,7 +84,7 @@ def plot_wfs(
     Returns:
         matplotlib.figure.Figure: The generated figure object.
     """
-    peak_chans = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf, 2), 1)
+    peak_chans = np.argmax(np.ptp(mean_wf, axis=2), axis=1)
     peak = int(np.mean(peak_chans[clust]))
 
     fig, axes = plt.subplots(
@@ -120,45 +122,43 @@ def plot_wfs(
         ind = i - ch_start
         or_ind = ind * len(clust) + 1
 
-        for cl in range(len(clust)):
+        for cl, id in enumerate(clust):
             p_ind = or_ind + cl
-            id = clust[cl]
-            a = plt.subplot(math.ceil(nchan / 2), 2 * len(clust), p_ind)
-            a.set_facecolor("black")
+            ax = plt.subplot(math.ceil(nchan / 2), 2 * len(clust), p_ind)
+            ax.set_facecolor("black")
             for j in range(min(200, spikes[id].shape[0])):
-                (line,) = plt.plot(
+                (line,) = ax.plot(
                     spikes[id][j, i, start:stop],
                     label=str(id),
                     color=COLORS[cl],
                     linewidth=0.25,
                 )
-            lines.append(line)  # type: ignore
-            plt.ylim([ymin, ymax])
+            lines.append(line)
+            ax.set_ylim([ymin, ymax])
 
-            a.spines["top"].set_visible(False)
-            a.spines["right"].set_visible(False)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
 
-            plt.tick_params(
-                axis="x",  # changes apply to the x-axis
-                which="both",  # both major and minor ticks are affected
-                bottom=False,  # ticks along the bottom edge are off
-                top=False,  # ticks along the top edge are off
+            ax.tick_params(
+                axis="x",
+                which="both",
+                bottom=False,
+                top=False,
                 labelbottom=False,
-            )  # labels along the bottom edge are off
-            plt.tick_params(
-                axis="y",  # changes apply to the x-axis
-                which="both",  # both major and minor ticks are affected
-                left=False,  # ticks along the bottom edge are off
-                right=False,  # ticks along the top edge are off
+            )
+            ax.tick_params(
+                axis="y",
+                which="both",
+                left=False,
+                right=False,
                 labelleft=False,
-            )  # labels along the bottom edge are off
+            )
 
     for ax, row in zip(axes[:, 0], range(ch_start, ch_stop, 2)):
         ax.set_ylabel(row, rotation=90, size="large")
     for ax, row in zip(axes[:, len(clust)], range(ch_start + 1, ch_stop, 2)):
         ax.set_ylabel(row, rotation=90, size="large")
 
-    # fig.tight_layout()
     fig.legend(lines, clust)
 
     return fig
@@ -182,64 +182,68 @@ def plot_corr(
     Returns:
         fig (Figure): The generated figure.
     """
-    fig, axes = plt.subplots(len(clust), len(clust), figsize=(10, 5))
+    n_clust = len(clust)
+    fig, axes = plt.subplots(n_clust, n_clust, figsize=(10, 5))
 
-    # auto
-    for i in range(len(clust)):
+    overlap_tol = params.get("overlap_tol", 10 / 30000)
+
+    # auto correlograms
+    for i in range(n_clust):
         acg = bd.auto_correlogram(
-            times_multi[clust[i]] / 30000, window_size, bin_size, overlap_tol=10 / 30000
+            times_multi[clust[i]] / 30000,
+            window_size,
+            bin_size,
+            overlap_tol=overlap_tol,
         )
 
-        a = plt.subplot(len(clust), len(clust), (i * len(clust)) + (i + 1))
-        a.set_facecolor("black")
-        a.set_yticks([0, acg.max()])
-        plt.bar(range(len(acg)), acg, width=1, color=COLORS[i])  # type: ignore
+        ax = plt.subplot(n_clust, n_clust, (i * n_clust) + (i + 1))
+        ax.set_facecolor("black")
+        ax.set_yticks([0, acg.max()])
+        plt.bar(range(len(acg)), acg, width=1, color=COLORS[i])
 
-        a.spines["top"].set_visible(False)
-        a.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
         plt.tick_params(
-            axis="x",  # changes apply to the x-axis
-            which="both",  # both major and minor ticks are affected
-            bottom=False,  # ticks along the bottom edge are off
-            top=False,  # ticks along the top edge are off
+            axis="x",
+            which="both",
+            bottom=False,
+            top=False,
             labelbottom=False,
-        )  # labels along the bottom edge are off
+        )
 
-    # cross
-    for i in range(len(clust)):
-        for j in range(len(clust)):
-            if i != j:
-                ccg = bd.x_correlogram(
-                    times_multi[clust[i]] / 30000,
-                    times_multi[clust[j]] / 30000,
-                    window_size,
-                    bin_size,
-                    overlap_tol=params["overlap_tol"],
-                )[0]
-                a = plt.subplot(len(clust), len(clust), i * len(clust) + (j + 1))
-                a.set_facecolor("black")
+    cross_pairs = [(i, j) for i in range(n_clust) for j in range(n_clust) if i != j]
 
-                a.spines["top"].set_visible(False)
-                a.spines["right"].set_visible(False)
+    # cross correlograms
+    for i, j in cross_pairs:
+        ccg = bd.x_correlogram(
+            times_multi[clust[i]] / 30000,
+            times_multi[clust[j]] / 30000,
+            window_size,
+            bin_size,
+            overlap_tol=overlap_tol,
+        )[0]
+        ax = plt.subplot(n_clust, n_clust, i * n_clust + (j + 1))
+        ax.set_facecolor("black")
 
-                a.set_yticks([0, ccg.max()])
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
-                if i > j:
-                    plt.bar(range(len(ccg)), ccg[::-1], width=1, color=LIGHT_COLORS[i])  # type: ignore
-                else:
-                    plt.bar(range(len(ccg)), ccg, width=1, color=LIGHT_COLORS[i])  # type: ignore
+        ax.set_yticks([0, ccg.max()])
 
-                plt.xlabel
+        if i > j:
+            ax.bar(range(len(ccg)), ccg[::-1], width=1, color=LIGHT_COLORS[i])  # type: ignore
+        else:
+            ax.bar(range(len(ccg)), ccg, width=1, color=LIGHT_COLORS[i])  # type: ignore
 
-                plt.tick_params(
-                    axis="x",  # changes apply to the x-axis
-                    which="both",  # both major and minor ticks are affected
-                    bottom=False,  # ticks along the bottom edge are off
-                    top=False,  # ticks along the top edge are off
-                    labelbottom=False,
-                )  # labels along the bottom edge are off
+        ax.tick_params(
+            axis="x",
+            which="both",
+            bottom=False,
+            top=False,
+            labelbottom=False,
+        )
 
-    if len(clust) > 1:
+    if n_clust > 1:
         for ax, col in zip(axes[-1], clust):
             ax.set_xlabel(col, size="large")
 

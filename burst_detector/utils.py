@@ -284,14 +284,14 @@ def get_dists(
     Calculates the distance from a specified channel on the probe to a set of
     target channels.
 
-    ### Args:
-        - `channel_positions` (np.ndarray): XY coordinates of each channel on the
+    Args:
+        channel_positions (NDArray): XY coordinates of each channel on the
             probe (in arbitrary units)
-        - `ref_chan` (int): The index of the channel to calculate distances relative to.
-        - `target_chans` (np.ndarray): The set of target channels.
+        ref_chan (int): The index of the channel to calculate distances relative to.
+        target_chans (NDArray): The set of target channels.
 
-    ### Returns:
-        - `dists` (np.ndarray): Distances to each of the target channels, in the same
+    Returns:
+        dists (NDArray): Distances to each of the target channels, in the same
             order as `target_chans`.
     """
     x: NDArray[np.float_] = channel_positions[:, 0]

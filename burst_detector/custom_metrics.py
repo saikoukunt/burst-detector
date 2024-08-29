@@ -1,6 +1,7 @@
 import logging
 import math
 import os
+import sys
 from typing import Tuple
 
 import numpy as np
@@ -340,8 +341,11 @@ def calc_wf_shape_metrics(
 
 
 if __name__ == "__main__":
-    calc_metrics(
-        r"E://T01/20240612_Tate_T01/catgt_20240612_Tate_Test_Bank0_right_g0/20240612_Tate_Test_Bank0_right_g0_imec0/imec0_ks25",
-        r"E://T01/20240612_Tate_T01/catgt_20240612_Tate_Test_Bank0_right_g0/20240612_Tate_Test_Bank0_right_g0_imec0/20240612_Tate_Test_Bank0_right_g0_tcat.imec0.ap.bin",
-        385,
-    )
+    try:
+        calc_metrics(
+            r"E://T01/20240612_Tate_T01/catgt_20240612_Tate_Test_Bank0_right_g0/20240612_Tate_Test_Bank0_right_g0_imec0/imec0_ks25",
+            r"E://T01/20240612_Tate_T01/catgt_20240612_Tate_Test_Bank0_right_g0/20240612_Tate_Test_Bank0_right_g0_imec0/20240612_Tate_Test_Bank0_right_g0_tcat.imec0.ap.bin",
+            385,
+        )
+    except KeyboardInterrupt:
+        sys.exit(1)

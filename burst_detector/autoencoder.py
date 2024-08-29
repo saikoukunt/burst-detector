@@ -304,7 +304,7 @@ def train_ae(
 
     Args:
         spikes (torch.Tensor): Spike snippets.
-        cl_ids (np.ndarray): Cluster ids of spike snippets.
+        cl_ids (NDArray): Cluster ids of spike snippets.
         n_filt (int): Number of filters in the last convolutional layer before
             the bottleneck. Defaults to 256, values larger than 1024 cause
             CUDA to run out of memory on most GPUs.

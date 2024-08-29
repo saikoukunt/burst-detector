@@ -1,3 +1,4 @@
+import sys
 from typing import Any
 
 from argschema import ArgSchemaParser
@@ -28,4 +29,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(1)
