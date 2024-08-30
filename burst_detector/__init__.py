@@ -1,4 +1,4 @@
-from burst_detector.utils import find_times_multi, extract_spikes, spikes_per_cluster, find_best_channels, get_dists
+from burst_detector.utils import find_times_multi, extract_spikes, spikes_per_cluster, find_best_channels, get_dists, calc_mean_and_std_wf
 from burst_detector.cluster_metrics import wf_means_similarity, calc_wf_norms, cross_proj
 from burst_detector.xcorr import bin_spike_trains, x_correlogram, auto_correlogram, xcorr_sig
 from burst_detector.stages import calc_mean_sim, calc_ae_sim, calc_cross_sim, calc_xcorr_metric, calc_ref_p, merge_clusters

@@ -31,13 +31,13 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     channel_pos: NDArray[np.float_] = np.load(
         os.path.join(params["KS_folder"], "channel_positions.npy")
     )
+    if "group" not in cl_labels.columns:
+        cl_labels["group"] = cl_labels["KSLabel"]
 
     # Compute useful cluster info.
-    n_clust: int = clusters.max() + 1
-    counts: dict[int, int] = bd.spikes_per_cluster(clusters)
-    times_multi: list[NDArray[np.float_]] = bd.find_times_multi(
-        times, clusters, np.arange(clusters.max() + 1)
-    )
+    n_clust = clusters.max() + 1
+    counts = bd.spikes_per_cluster(clusters)
+    times_multi = bd.find_times_multi(times, clusters, np.arange(clusters.max() + 1))
 
     # Load the ephys recording.
     rawData = np.memmap(params["data_filepath"], dtype=params["dtype"], mode="r")
@@ -46,53 +46,19 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     )
 
     # Mark units that we don't want to consider.
-    cl_good: NDArray[np.bool_] = np.zeros(n_clust, dtype=bool)
-    unique: NDArray[np.int_] = np.unique(clusters)
-    for cl in range(n_clust):
-        if (
-            (cl in unique)
-            and (counts[cl] > params["min_spikes"])
-            and (
-                cl_labels.loc[cl_labels["cluster_id"] == cl, "group"].item()
-                in params["good_lbls"]
-            )
-        ):
-            cl_good[cl] = True
+    good_ids = cl_labels.loc[
+        cl_labels["group"].isin(params["good_lbls"]), "cluster_id"
+    ].values
+    min_spike_ids = np.where(counts > params["min_spikes"])[0]
+    good_ids = np.intersect1d(good_ids, min_spike_ids)
+    cl_good = np.zeros(n_clust, dtype=bool)
+    cl_good[good_ids] = True
 
-    # Calculate cluster mean waveforms if needed.
-    spikes: dict[int, NDArray[np.int_]] | None = None
-    try:
-        mean_wf: NDArray[np.float_] = np.load(
-            os.path.join(params["KS_folder"], "mean_waveforms.npy")
-        )
-        std_wf: NDArray[np.float_] = np.load(
-            os.path.join(params["KS_folder"], "std_waveforms.npy")
-        )
-    except OSError:
-        print(
-            "mean_waveforms.npy doesn't exist, calculating mean waveforms on the fly..."
-        )
-        mean_wf: NDArray[np.float_] = np.zeros(
-            (n_clust, params["n_chan"], params["pre_samples"] + params["post_samples"])
-        )
-        std_wf: NDArray[np.float_] = np.zeros_like(mean_wf)
-        spikes = {}
-        for i in range(n_clust):
-            if cl_good[i]:
-                spikes[i] = bd.extract_spikes(
-                    data,
-                    times_multi,
-                    i,
-                    n_chan=params["n_chan"],
-                    pre_samples=params["pre_samples"],
-                    post_samples=params["post_samples"],
-                    max_spikes=params["max_spikes"],
-                )
-                mean_wf[i, :, :] = np.nanmean(spikes[i], axis=0)
-                std_wf[i, :, :] = np.nanstd(spikes[i], axis=0)
-        np.save(os.path.join(params["KS_folder"], "mean_waveforms.npy"), mean_wf)
-        np.save(os.path.join(params["KS_folder"], "std_waveforms.npy"), std_wf)
-    peak_chans: NDArray[np.int_] = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf, 2), 1)
+    mean_wf, std_wf, spikes = bd.calc_mean_and_std_wf(
+        params, n_clust, good_ids, times_multi, data, return_spikes=True
+    )
+
+    peak_chans = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf, 2), 1)
 
     t0: float = time.time()
 
@@ -118,14 +84,16 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
             "num_chan": params["ae_chan"],
             "for_shft": params["ae_shft"],
         }
-        spk_snips: torch.Tensor
-        cl_ids: NDArray[np.int_]
         spk_snips, cl_ids = bd.generate_train_data(
             data, ci, channel_pos, ext_params, params
         )
-
         # Train the autoencoder if needed.
-        if params["model_path"] == None:
+        model_path = (
+            params["model_path"]
+            if params["model_path"]
+            else os.path.join(params["KS_folder"], "automerge", "ae.pt")
+        )
+        if not os.path.exists(model_path):
             print("Training autoencoder...")
             net, spk_data = bd.train_ae(
                 spk_snips,
@@ -135,16 +103,13 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
             )
             torch.save(
                 net.state_dict(),
-                os.path.join(params["KS_folder"], "automerge", "ae.pt"),
+                model_path,
             )
-            print(
-                "Autoencoder saved in "
-                + str(os.path.join(params["KS_folder"], "automerge", "ae.pt"))
-            )
+            print(f"Autoencoder saved in {model_path}")
         else:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             net: bd.CN_AE = bd.CN_AE().to(device)
-            net.load_state_dict(torch.load(params["model_path"]))
+            net.load_state_dict(torch.load(model_path))
             net.eval()
             spk_data: bd.SpikeDataset = bd.SpikeDataset(spk_snips, cl_ids)
 
@@ -225,22 +190,6 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     print("Merging took %s" % merge_time)
 
     print("Writing to output...")
-    if spikes == None:
-        spikes = {}
-        print("Caching spikes")
-        for i in range(n_clust):
-            if cl_good[i]:
-                print("\r" + str(i) + "/" + str(clusters.max()), end="")
-                spikes[i] = bd.extract_spikes(
-                    data,
-                    times_multi,
-                    i,
-                    n_chan=params["n_chan"],
-                    pre_samples=params["pre_samples"],
-                    post_samples=params["post_samples"],
-                    max_spikes=params["max_spikes"],
-                )
-
     with open(
         os.path.join(params["KS_folder"], "automerge", "old2new.json"), "w"
     ) as file:
@@ -252,6 +201,7 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
         file.write(json.dumps(new2old, separators=(",\n", ":")))
 
     merges: list[list[int]] = list(new2old.values())
+
     bd.plot_merges(merges, times_multi, mean_wf, std_wf, spikes, params)
 
     t7: float = time.time()

@@ -4,12 +4,12 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from argschema import ArgSchemaParser
 from matplotlib.axes import Axes
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 from numpy.typing import NDArray
+from tqdm import tqdm
 
 import burst_detector as bd
 
@@ -19,23 +19,22 @@ def main() -> None:
 
     mod = ArgSchemaParser(schema_type=AutoMergeParams)
     params: dict[str, Any] = mod.args
+    # TODO fix
+    if params.get("max_spikes") is None:
+        params["max_spikes"] = 1000
 
     os.makedirs(os.path.join(params["KS_folder"], "automerge"), exist_ok=True)
     os.makedirs(os.path.join(params["KS_folder"], "automerge", "units"), exist_ok=True)
 
-    times: NDArray[np.float_] = np.load(
-        os.path.join(params["KS_folder"], "spike_times.npy")
-    ).flatten()
-    clusters: NDArray[np.int_] = np.load(
+    times = np.load(os.path.join(params["KS_folder"], "spike_times.npy")).flatten()
+    clusters = np.load(
         os.path.join(params["KS_folder"], "spike_clusters.npy")
     ).flatten()
-    n_clust: int = clusters.max() + 1
+    n_clust = clusters.max() + 1
 
     # count spikes per cluster, load quality labels
-    counts: dict[int, int] = bd.spikes_per_cluster(clusters)
-    times_multi: list[NDArray[np.float_]] = bd.find_times_multi(
-        times, clusters, np.arange(clusters.max() + 1)
-    )
+    counts = bd.spikes_per_cluster(clusters)
+    times_multi = bd.find_times_multi(times, clusters, np.arange(clusters.max() + 1))
 
     # load recording
     rawData = np.memmap(params["data_filepath"], dtype=params["dtype"], mode="r")
@@ -44,78 +43,23 @@ def main() -> None:
     )
 
     # filter out low-spike/noise units
-    cl_good: NDArray[np.bool_] = np.zeros(n_clust, dtype=bool)
-    unique: NDArray[np.int_] = np.unique(clusters)
-    for i in range(n_clust):
-        if (i in unique) and (counts[i] > params["min_spikes"]):
-            cl_good[i] = True
-    try:
-        mean_wf: NDArray[np.float_] = np.load(
-            os.path.join(params["KS_folder"], "mean_waveforms.npy")
-        )
-        std_wf: NDArray[np.float_] = np.load(
-            os.path.join(params["KS_folder"], "std_waveforms.npy")
-        )
+    good_ids = np.where(counts > params["min_spikes"])[0]
+    mean_wf, std_wf, spikes = bd.calc_mean_and_std_wf(
+        params, n_clust, good_ids, times_multi, data, return_spikes=True
+    )
 
-        print("Caching spikes...")
-        spikes: dict[int, NDArray[np.int_]] = {}
-        for i in range(n_clust):
-            print("\r" + str(i) + "/" + str(clusters.max()), end="")
-            if cl_good[i]:
-                spikes[i] = bd.extract_spikes(
-                    data,
-                    times_multi,
-                    i,
-                    n_chan=params["n_chan"],
-                    pre_samples=params["pre_samples"],
-                    post_samples=params["post_samples"],
-                    max_spikes=params["max_spikes"],
-                )
-    except OSError:
-        print(
-            "mean_waveforms.npy doesn't exist, calculating mean waveforms on the fly..."
-        )
-        mean_wf = np.zeros(
-            (n_clust, params["n_chan"], params["pre_samples"] + params["post_samples"])
-        )
-        std_wf = np.zeros_like(mean_wf)
-        spikes = {}
+    for id in tqdm(good_ids, desc="Plotting units"):
+        wf_plot = plot_wfs(id, mean_wf, std_wf, spikes[id])
+        acg_plot = plot_acg(id, times_multi)
 
-        for i in range(n_clust):
-            print("\r" + str(i) + "/" + str(clusters.max()), end="")
-            if cl_good[i]:
-                spikes[i] = bd.extract_spikes(
-                    data,
-                    times_multi,
-                    i,
-                    n_chan=params["n_chan"],
-                    pre_samples=params["pre_samples"],
-                    post_samples=params["post_samples"],
-                    max_spikes=params["max_spikes"],
-                )
-                mean_wf[i, :, :] = np.nanmean(spikes[i], axis=0)
-                std_wf[i, :, :] = np.nanstd(spikes[i], axis=0)
-        np.save(os.path.join(params["KS_folder"], "mean_waveforms.npy"), mean_wf)
-        np.save(os.path.join(params["KS_folder"], "std_waveforms.npy"), std_wf)
+        name: str = os.path.join(params["KS_folder"], "automerge", f"units{id}.pdf")
+        file = PdfPages(name)
+        file.savefig(wf_plot, dpi=300)
+        file.savefig(acg_plot, dpi=300)
+        file.close()
 
-    print("\nDone, plotting units...")
-
-    for i in range(n_clust):
-        if cl_good[i]:
-            print("\r" + str(i) + "/" + str(clusters.max()), end="")
-            wf_plot: Figure = plot_wfs(i, mean_wf, std_wf, spikes[i])
-            acg_plot: Figure = plot_acg(i, times_multi)
-
-            name: str = os.path.join(
-                params["KS_folder"], "automerge", "units", str(i) + ".pdf"
-            )
-            file = PdfPages(name)
-            file.savefig(wf_plot, dpi=300)
-            file.savefig(acg_plot, dpi=300)
-            file.close()
-
-            plt.close(wf_plot)
-            plt.close(acg_plot)
+        plt.close(wf_plot)
+        plt.close(acg_plot)
 
 
 def plot_wfs(
