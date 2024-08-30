@@ -1,333 +1,292 @@
-from argschema import ArgSchema
-from argschema.fields import Bool, Float, InputDir, InputFile, Int, List, String
-from argschema.schemas import DefaultSchema
+import os
+
+from marshmallow import Schema
+from marshmallow.fields import Boolean, Field, Float, Integer, List, String
 
 
-class AutoMergeParams(ArgSchema):
-    # filepaths
+class InputFile(Field):
+    default_error_messages = {
+        "invalid": "Not a valid filepath",
+        "not_found": "File not found",
+        "not_file": "Not a file",
+    }
+
+    def __init__(self, *args, check_exists=False, **kwargs):
+        self.check_exists = check_exists
+        super().__init__(*args, **kwargs)
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        # Ensure value is a string
+        if not isinstance(value, str):
+            self.fail("invalid")
+        # Normalize the path
+        value = os.path.abspath(value)
+        value = os.path.normpath(value)
+        # Ensure the file exists
+        if self.check_exists and self.required and value is not None:
+            print(value)
+            if not os.path.exists(value):
+                self.fail("not_found")
+            # Ensure the path is a file
+            if not os.path.isfile(value):
+                self.fail("not_file")
+        return value
+
+    def _serialize(self, value, attr, obj, **kwargs):
+        return os.path.normpath(value) if value else None
+
+
+class InputDir(Field):
+    default_error_messages = {
+        "invalid": "Not a valid filepath",
+        "not_found": "Directory not found",
+        "not_dir": "Not a directory",
+    }
+
+    def __init__(self, *args, check_exists=False, create=False, **kwargs):
+        self.check_exists = check_exists
+        self.create = create
+        super().__init__(*args, **kwargs)
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        # Ensure value is a string
+        if not isinstance(value, str):
+            self.fail("invalid")
+
+        # Ensure the file exists
+        if self.create:
+            os.makedirs(value, exist_ok=True)
+
+        if self.check_exists:
+            if not os.path.exists(value):
+                self.fail("not_found")
+            # Ensure the path is a directory
+            if not os.path.isdir(value):
+                self.fail("not_dir")
+        return value
+
+    def _serialize(self, value, attr, obj, **kwargs):
+        return os.path.normpath(value) if value else None
+
+
+class KSParams(Schema):
+    # Parameters from params.py
     data_filepath = InputFile(
-        required=True, description="Filepath for recording binary"
+        required=True, description="Filepath for recording binary", check_exists=True
     )
-    KS_folder = InputDir(required=True, description="Kilosort output directory")
+    KS_folder = InputDir(
+        required=True, description="Kilosort output directory", check_exists=True
+    )
     dtype = String(
         required=False,
-        default="int16",
+        missing="int16",
         description="Datatype of words in recording binary",
     )
+    sample_rate = Float(
+        required=True, description="Sampling frequency of the recording"
+    )
+    n_chan = Integer(required=True, description="Number of channels in the recording")
+    offset = Integer(requred=False, description="Offset of the recording")
+    hp_filtered = Boolean(
+        required=False, description="True if recording is high-pass filtered"
+    )
 
-    # parameters
-    fs = Int(
-        required=False, default=30000, description="Sampling frequency of the recording"
-    )
-    n_chan = Int(
-        required=False, default=385, description="Number of channels in the recording"
-    )
-    pre_samples = Int(
+
+class WaveformParams(Schema):
+    # Parameters for waveform extraction
+    pre_samples = Integer(
         required=False,
-        default=20,
+        missing=20,
         description="Number of samples to extract before the peak of the spike",
     )
-    post_samples = Int(
+    post_samples = Integer(
         required=False,
-        default=62,
+        missing=62,
         description="Number of samples to extract after the peak of the spike",
     )
-    max_spikes = (
-        Int(
-            required=False,
-            default=1000,
-            description="Maximum number of spikes per cluster used to calculate mean waveforms and cross projections (-1 uses all spikes)",
-        ),
+    min_spikes = Integer(
+        required=False,
+        missing=100,
+        description="Number of spikes threshold for a cluster to undergo further stages.",
+    )
+    max_spikes = Integer(
+        required=False,
+        missing=-1,
+        description="Maximum number of spikes per cluster used to calculate mean waveforms and cross projections (-1 uses all spikes)",
     )
     good_lbls = List(
         String,
         required=False,
         cli_as_single_argument=True,
-        default=["good", "mua"],
+        missing=["good", "mua"],
         description="Cluster labels that denote non-noise clusters.",
     )
 
-    sim_type = String(
-        required=False,
-        default="ae",
-        description='Type of similarity metric to use, must be either "ae" (for autoencoder similarity) or "mean" (for mean similarity)',
-    )
-    jitter = Bool(
-        required=False,
-        default=False,
-        description="True if mean similarity calculations should check for time shifts between waveforms",
-    )
-    jitter_amt = Int(
-        required=False,
-        default=4,
-        description="For time shift checking, number of samples to search in each direction",
-    )
-    sim_thresh = Float(
-        required=False,
-        default=0.4,
-        description="Similarity threshold for a cluster pair to undergo further stages",
-    )
-    min_spikes = Int(
-        required=False,
-        default=100,
-        description="Number of spikes threshold for a cluster to undergo further stages.",
-    )
 
+class CorrelogramParams(Schema):
+    # Cross-correlogram parameters
     window_size = Float(
         required=False,
-        default=0.025,
+        missing=0.025,
         description="The width in seconds of the cross correlogram window.",
+    )
+    max_window = Float(
+        required=False,
+        missing=0.25,
+        description="Maximum window size in seconds when searching for enough spikes to construct a cross correlogram",
     )
     xcorr_bin_width = Float(
         required=False,
-        default=0.0005,
+        missing=0.0005,
         description="The width in seconds of bins for cross correlogram calculation",
     )
     overlap_tol = Float(
         required=False,
-        default=10 / 30000,
+        missing=10 / 30000,
         description="Overlap tolerance in seconds. Spikes within the tolerance of the reference spike time will not be counted for cross correlogram calculation",
-    )
-    max_window = Float(
-        required=False,
-        default=0.25,
-        description="Maximum window size in seconds when searching for enough spikes to construct a cross correlogram",
     )
     min_xcorr_rate = Float(
         required=False,
-        default=1200,
+        missing=1200,
         description="Spike count threshold (per second) for cross correlograms. Cluster pairs whose cross correlogram spike rate is lower than the threshold will have a penalty applied to their cross correlation metric",
     )
+    xcorr_coeff = Float(
+        required=False,
+        missing=0.5,
+        description="Coefficient applied to cross correlation metric during final metric calculation",
+    )
 
+
+class RefractoryParams(Schema):
     ref_pen_bin_width = Float(
         required=False,
-        default=1,
+        missing=1,
         description="For refractory period penalty, bin width IN MS of cross correlogram, also affects refractory periods",
     )
     max_viol = Float(
         required=False,
-        default=0.25,
+        missing=0.25,
         description="For refractory period penalty, maximum acceptable proportion (w.r.t uniform acg) of refractory period collisions",
-    )
-
-    xcorr_coeff = Float(
-        required=False,
-        default=0.5,
-        description="Coefficient applied to cross correlation metric during final metric calculation",
     )
     ref_pen_coeff = Float(
         required=False,
-        default=1,
+        missing=1,
         description="Coefficient applied to refractory period penalty",
     )
-    final_thresh = Float(
+
+
+class SimilarityParams(Schema):
+    # Similarity calculation parameters
+    sim_type = String(
         required=False,
-        default=0.5,
-        description="Final metric threshold for merge decisions",
-    )
-    max_dist = Int(
-        required=False,
-        default=10,
-        description="Maximum distance between peak channels for a merge to be valid",
+        missing="ae",
+        description='Type of similarity metric to use, must be either "ae" (for autoencoder similarity) or "mean" (for mean similarity)',
     )
 
-    ae_pre = Int(
-        required=False,
-        default=10,
-        description="For autoencoder training snippet, number of samples to extract before peak of the spike",
-    )
-    ae_post = Int(
-        required=False,
-        default=30,
-        description="For autoencoder training snippet, number of samples to extract after peak of the spike",
-    )
-    ae_chan = Int(
-        required=False,
-        default=8,
-        description="For autoencoder training snippet, number of channels to include",
-    )
-    ae_noise = Bool(
-        required=False,
-        default=False,
-        description="For autoencoder training, True if autoencoder should explicitly be trained on noise snippets",
-    )
-    ae_shft = Bool(
-        required=False,
-        default=False,
-        description="For autoencoder training, True if autoencoder should be trained on time-shifted snippets",
-    )
-    ae_epochs = Int(
-        required=False,
-        default=25,
-        description="Number of epochs to train autoencoder for",
-    )
+    # Similarity: Autoencoder parameters
     spikes_path = InputDir(
         required=False,
-        default=None,
+        missing=None,
         description="Path to pre-extracted spikes folder",
+        create=True,
+        check_exists=True,
         allow_none=True,
     )
     model_path = InputFile(
         required=False,
-        default=None,
+        missing=None,
         description="Path to pre-trained model",
+        check_exists=True,
         allow_none=True,
-    )
-
-
-class AutomergeGUIParams(ArgSchema):
-    # parameters
-    pre_samples = Int(
-        required=False,
-        default=20,
-        description="Number of samples to extract before the peak of the spike",
-    )
-    post_samples = Int(
-        required=False,
-        default=62,
-        description="Number of samples to extract after the peak of the spike",
-    )
-    max_spikes = Int(
-        required=False,
-        default=1000,
-        description="Maximum number of spikes per cluster used to calculate mean waveforms and cross projections (-1 uses all spikes)",
-    )
-
-    sim_type = String(
-        required=False,
-        default="ae",
-        description='Type of similarity metric to use, must be either "ae" (for autoencoder similarity) or "mean" (for mean similarity)',
-    )
-    jitter = Bool(
-        required=False,
-        default=False,
-        description="True if mean similarity calculations should check for time shifts between waveforms",
-    )
-    jitter_amt = Int(
-        required=False,
-        default=4,
-        description="For time shift checking, number of samples to search in each direction",
     )
     sim_thresh = Float(
         required=False,
-        default=0.4,
+        missing=0.4,
         description="Similarity threshold for a cluster pair to undergo further stages",
     )
-    min_spikes = Int(
+    ae_pre = Integer(
         required=False,
-        default=100,
-        description="Number of spikes threshold for a cluster to undergo further stages.",
+        missing=10,
+        description="For autoencoder training snippet, number of samples to extract before peak of the spike",
+    )
+    ae_post = Integer(
+        required=False,
+        missing=30,
+        description="For autoencoder training snippet, number of samples to extract after peak of the spike",
+    )
+    ae_chan = Integer(
+        required=False,
+        missing=8,
+        description="For autoencoder training snippet, number of channels to include",
+    )
+    ae_noise = Boolean(
+        required=False,
+        missing=False,
+        description="For autoencoder training, True if autoencoder should explicitly be trained on noise snippets",
+    )
+    ae_shft = Boolean(
+        required=False,
+        missing=False,
+        description="For autoencoder training, True if autoencoder should be trained on time-shifted snippets",
+    )
+    ae_epochs = Integer(
+        required=False,
+        missing=25,
+        description="Number of epochs to train autoencoder for",
     )
 
-    window_size = Float(
+    # Similarity: Mean parameters
+    jitter = Boolean(
         required=False,
-        default=0.025,
-        description="The width in seconds of the cross correlogram window.",
+        missing=False,
+        description="True if mean similarity calculations should check for time shifts between waveforms",
     )
-    xcorr_bin_width = Float(
+    jitter_amt = Integer(
         required=False,
-        default=0.0005,
-        description="The width in seconds of bins for cross correlogram calculation",
-    )
-    overlap_tol = Float(
-        required=False,
-        default=10 / 30000,
-        description="Overlap tolerance in seconds. Spikes within the tolerance of the reference spike time will not be counted for cross correlogram calculation",
-    )
-    max_window = Float(
-        required=False,
-        default=0.25,
-        description="Maximum window size in seconds when searching for enough spikes to construct a cross correlogram",
-    )
-    min_xcorr_rate = Float(
-        required=False,
-        default=800,
-        description="Spike count threshold (per second) for cross correlograms. Cluster pairs whose cross correlogram spike rate is lower than the threshold will have a penalty applied to their cross correlation metric",
+        missing=4,
+        description="For time shift checking, number of samples to search in each direction",
     )
 
-    ref_pers = List(
-        Float,
-        required=False,
-        cli_as_single_argument=True,
-        default=[0.001, 0.002, 0.004],
-        description="List of potential refractory period lengths (in s)",
-    )
-    max_viol = Float(
-        required=False,
-        default=0.25,
-        description="For refractory period penalty, maximum acceptable proportion (w.r.t uniform acg) of refractory period collisions",
-    )
 
-    xcorr_coeff = Float(
+class CustomMetricsParams(KSParams, WaveformParams):
+    pass
+
+
+class PlotUnitsParams(KSParams, WaveformParams, CorrelogramParams):
+    pass
+
+
+class RunParams(
+    KSParams, WaveformParams, CorrelogramParams, RefractoryParams, SimilarityParams
+):
+    output_json = InputFile(
         required=False,
-        default=0.5,
-        description="Coefficient applied to cross correlation metric during final metric calculation",
-    )
-    ref_pen_coeff = Float(
-        required=False,
-        default=1,
-        description="Coefficient applied to refractory period penalty",
+        missing=None,
+        check_exists=False,
+        description="Output JSON file for run parameters",
     )
     final_thresh = Float(
         required=False,
-        default=0.5,
+        missing=0.5,
         description="Final metric threshold for merge decisions",
     )
-    max_dist = Int(
+    max_dist = Integer(
         required=False,
-        default=10,
+        missing=10,
         description="Maximum distance between peak channels for a merge to be valid",
     )
-
-    ae_pre = Int(
+    plot_merges = Boolean(
         required=False,
-        default=10,
-        description="For autoencoder training snippet, number of samples to extract before peak of the spike",
-    )
-    ae_post = Int(
-        required=False,
-        default=30,
-        description="For autoencoder training snippet, number of samples to extract after peak of the spike",
-    )
-    ae_chan = Int(
-        required=False,
-        default=8,
-        description="For autoencoder training snippet, number of channels to include",
-    )
-    ae_noise = Bool(
-        required=False,
-        default=False,
-        description="For autoencoder training, True if autoencoder should explicitly be trained on noise snippets",
-    )
-    ae_shft = Bool(
-        required=False,
-        default=False,
-        description="For autoencoder training, True if autoencoder should be trained on time-shifted snippets",
-    )
-    ae_epochs = Int(
-        required=False,
-        default=25,
-        description="Number of epochs to train autoencoder for",
-    )
-    spikes_path = InputDir(
-        required=False,
-        default=None,
-        description="Path to pre-extracted spikes folder",
-        allow_none=True,
-    )
-    model_path = InputFile(
-        required=False,
-        default=None,
-        description="Path to pre-trained model",
-        allow_none=True,
+        missing=False,
+        description="True if merges should be plotted",
     )
 
 
-class OutputParams(DefaultSchema):
+class OutputParams(Schema):
     mean_time = String()
-    xcorr_sig_time = String()
+    xcorr_time = String()
     ref_pen_time = String()
     merge_time = String()
     total_time = String()
-    num_merges = Int()
-    orig_clust = Int()
+    num_merges = Integer()
+    orig_clust = Integer()

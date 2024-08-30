@@ -184,7 +184,8 @@ def run_merge(params: dict[str, Any]) -> tuple[str, str, str, str, str, int, int
 
     merges = list(new2old.values())
 
-    bd.plot_merges(merges, times_multi, mean_wf, std_wf, spikes, params)
+    if params["plot_merges"]:
+        bd.plot_merges(merges, times_multi, mean_wf, std_wf, spikes, params)
 
     t7 = time.time()
     total_time: str = time.strftime("%H:%M:%S", time.gmtime(t7 - t0))

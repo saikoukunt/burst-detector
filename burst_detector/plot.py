@@ -23,8 +23,6 @@ def plot_merges(
     nchan: int = 20,
     start: int = 10,
     stop: int = 60,
-    window_size: float = 0.102,
-    bin_size: float = 0.001,
 ) -> None:
     """
     Plot the merges by generating waveform and correlation plots.
@@ -38,13 +36,11 @@ def plot_merges(
         nchan (int, optional): Number of channels. Defaults to 20.
         start (int, optional): Start time for plotting. Defaults to 10.
         stop (int, optional): Stop time for plotting. Defaults to 60.
-        window_size (float, optional): Window size for correlation plot. Defaults to 0.102.
-        bin_size (float, optional): Bin size for correlation plot. Defaults to 0.001.
     """
     for merge in tqdm(merges, desc="Plotting merges"):
         merge.sort()
         wf_plot = plot_wfs(merge, mean_wf, std_wf, spikes, nchan, start, stop)
-        corr_plot = plot_corr(merge, times_multi, params, window_size, bin_size)
+        corr_plot = plot_corr(merge, times_multi, params)
 
         merge_str = "_".join(map(str, merge))
         name = os.path.join(
@@ -168,8 +164,6 @@ def plot_corr(
     clust: list[int],
     times_multi: list[NDArray[np.float_]],
     params: dict[str, Any],
-    window_size: float = 0.102,
-    bin_size: float = 0.001,
 ) -> Figure:
     """
     Plots the auto and cross correlograms for a given set of clusters.
@@ -177,8 +171,6 @@ def plot_corr(
         clust (list): List of cluster indices.
         times_multi (list): List of spike times for each cluster.
         params (dict): Dictionary of parameters.
-        window_size (float): Size of the correlation window in seconds. Default is 0.102.
-        bin_size (float): Size of the correlation bin in seconds. Default is 0.001.
     Returns:
         fig (Figure): The generated figure.
     """
@@ -186,7 +178,8 @@ def plot_corr(
     fig, axes = plt.subplots(n_clust, n_clust, figsize=(10, 5))
 
     overlap_tol = params.get("overlap_tol", 10 / 30000)
-
+    window_size = params["window_size"]
+    bin_size = params["xcorr_bin_width"]
     # auto correlograms
     for i in range(n_clust):
         acg = bd.auto_correlogram(

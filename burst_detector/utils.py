@@ -4,6 +4,8 @@ General utilities for ephys data-wrangling.
 Assumes that ephys data is stored in the phy output format.
 """
 
+import argparse
+import json
 import logging
 import os
 from typing import Any
@@ -19,14 +21,61 @@ import burst_detector as bd
 logger = logging.getLogger("burst-detector")
 
 
+def parse_args() -> dict[str, Any]:
+    parser = argparse.ArgumentParser(description="Parse arguments for plot_units.py")
+    # Define optional arguments
+    parser.add_argument("--input_json", type=str, help="Path to JSON file of arguments")
+    parser.add_argument("--KS_folder", type=str, help="Path to Kilosort folder")
+
+    # Parse arguments
+    args, unknown_args = parser.parse_known_args()
+    args = vars(args)
+    if args["input_json"]:
+        if os.path.exists(args["input_json"]):
+            if args["input_json"].endswith(".json"):
+                with open(args["input_json"], "r") as f:
+                    json_args = json.load(f)
+                    args.update(json_args)
+            else:
+                parser.error(
+                    "Input file must be a JSON file with .json file extension."
+                )
+        else:
+            parser.error(f"File {args['input_json']} does not exist")
+    del args["input_json"]
+    if not args["KS_folder"]:
+        parser.error(
+            "Please provide a Kilosort folder via --input_json or --KS_folder."
+        )
+    # Include unknown arguments
+    for key, value in zip(unknown_args[::2], unknown_args[1::2]):
+        # remove '--' from key
+        key = key[2:]
+        args[key] = value
+
+    # Process KS params.py file
+    ksparam_path = os.path.join(args["KS_folder"], "params.py")
+    ksparams = {}
+    with open(ksparam_path, "r") as f:
+        for line in f:
+            elem = line.split(sep="=")
+            ksparams[elem[0].strip()] = eval(elem[1].strip())
+    ksparams["data_filepath"] = os.path.join(
+        args["KS_folder"], ksparams.pop("dat_path")
+    )
+    ksparams["n_chan"] = ksparams.pop("n_channels_dat")
+    args.update(ksparams)
+    return args
+
+
 def find_times_multi(
     sp_times: NDArray[np.float_],
     sp_clust: NDArray[np.int_],
     clust_ids: list[int],
     max_spikes: int,
     data: NDArray[np.int_],
-    pre_samples: int = 20,
-    post_samples: int = 62,
+    pre_samples: int,
+    post_samples: int,
 ) -> list[NDArray[np.float_]]:
     """
     Finds all the spike times for each of the specified clusters.
@@ -96,9 +145,9 @@ def extract_spikes(
     data: NDArray[np.int_],
     times_multi: list[NDArray[np.float_]],
     clust_id: int,
-    pre_samples: int = 20,
-    post_samples: int = 62,
-    max_spikes: int = -1,
+    pre_samples: int,
+    post_samples: int,
+    max_spikes: int,
 ) -> NDArray[np.int_]:
     """
     Extracts spike waveforms for the specified cluster.

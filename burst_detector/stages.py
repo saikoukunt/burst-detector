@@ -460,8 +460,8 @@ def xcorr_func(
     import burst_detector as bd
 
     # extract spike times
-    c1_times = times_multi[c1] / params["fs"]
-    c2_times = times_multi[c2] / params["fs"]
+    c1_times = times_multi[c1] / params["sample_rate"]
+    c2_times = times_multi[c2] / params["sample_rate"]
 
     # compute xgrams
     return bd.x_correlogram(
@@ -501,8 +501,8 @@ def ref_p_func(
     import burst_detector as bd
 
     # Extract spike times.
-    c1_times = times_multi[c1] / params["fs"]
-    c2_times = times_multi[c2] / params["fs"]
+    c1_times = times_multi[c1] / params["sample_rate"]
+    c2_times = times_multi[c2] / params["sample_rate"]
 
     # Calculate cross-correlogram.
     ccg = bd.x_correlogram(

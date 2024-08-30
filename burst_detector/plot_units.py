@@ -1,24 +1,18 @@
 import os
-import sys
-from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-from argschema import ArgSchemaParser
 from matplotlib.backends.backend_pdf import PdfPages
 from tqdm import tqdm
 
 import burst_detector as bd
+from burst_detector.schemas import PlotUnitsParams
 
 
 def main() -> None:
-    from burst_detector import AutoMergeParams
-
-    mod = ArgSchemaParser(schema_type=AutoMergeParams)
-    params: dict[str, Any] = mod.args
-    # TODO fix
-    if params.get("max_spikes") is None:
-        params["max_spikes"] = 1000
+    args = bd.parse_args()
+    schema = PlotUnitsParams()
+    params = schema.load(args)
 
     automerge = os.path.join(params["KS_folder"], "automerge")
     os.makedirs(os.path.join(automerge, "units"), exist_ok=True)
@@ -36,7 +30,13 @@ def main() -> None:
     # count spikes per cluster, load quality labels
     counts = bd.spikes_per_cluster(clusters, params["max_spikes"])
     times_multi = bd.find_times_multi(
-        times, clusters, np.arange(n_clust), params["max_spikes"], data
+        times,
+        clusters,
+        np.arange(n_clust),
+        params["max_spikes"],
+        data,
+        params["pre_samples"],
+        params["post_samples"],
     )
 
     # filter out low-spike/noise units
@@ -59,7 +59,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        sys.exit(1)
+    main()
