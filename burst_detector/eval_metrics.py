@@ -30,15 +30,15 @@ def calc_fr_unif(spike_times, old2new, new2old, times_multi):
         
     return single_ds, merged_ds
 
-def calc_temp_mismatch(n_clust, labels, templates, channel_map, channel_pos, mean_wf):
-    # calculate template mismatch per cluster
-    mismatch = np.zeros(n_clust)
-    direc = np.zeros(n_clust)
-    peak_channel = np.zeros(n_clust)
+# def calc_temp_mismatch(n_clust, labels, templates, channel_map, channel_pos, mean_wf):
+#     # calculate template mismatch per cluster
+#     mismatch = np.zeros(n_clust)
+#     direc = np.zeros(n_clust)
+#     peak_channel = np.zeros(n_clust)
 
-    for i in range(n_clust):
-        if (i in counts) and (labels.loc[labels['cluster_id']==i, 'group'].item() == 'good'):
-            mismatch[i] = temp_mismatch(i, templates, channel_map, channel_pos, mean_wf)
+#     for i in range(n_clust):
+#         if (i in counts) and (labels.loc[labels['cluster_id']==i, 'group'].item() == 'good'):
+#             mismatch[i] = temp_mismatch(i, templates, channel_map, channel_pos, mean_wf)
 
     
 

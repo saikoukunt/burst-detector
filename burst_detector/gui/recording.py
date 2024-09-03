@@ -74,9 +74,12 @@ class Recording(object):
 
         # calculate things
         self.n_clust = self.clusters.max() + 1
-        self.counts = bd.spikes_per_cluster(self.clusters)
+        self.counts = bd.spikes_per_cluster(self.clusters, self.params["max_spikes"])
         self.cl_times = bd.find_times_multi(
-            self.sp_times, self.clusters, np.arange(self.n_clust), return_inds=True
+            self.sp_times,
+            self.clusters,
+            np.arange(self.n_clust),
+            self.data,
         )
         self.cl_inds = np.unique(self.clusters)
         self.cl_templates = {}
@@ -123,11 +126,8 @@ class Recording(object):
                             how="outer",
                         )
                     )
-
-        for key in self.counts:
-            metrics.loc[metrics["cluster_id"] == key, "n_spikes"] = int(
-                self.counts[key]
-            )
+        metrics.set_index("cluster_id", inplace=True)
+        metrics["n_spikes"] = self.counts[metrics.index]
 
         metrics["cur_label"] = ""
 
@@ -143,7 +143,7 @@ class Recording(object):
 
     def _calc_temp_counts(self):
         for i in range(self.n_clust):
-            if i in self.counts:
+            if self.counts[i] > 0:
                 spike_ids = self.cl_inds[i]
                 temps = self.spike_templates[spike_ids]
                 temp_counts = np.bincount(temps, minlength=self.n_templates)
@@ -167,7 +167,7 @@ class Recording(object):
         )  # max similarity of cluster to each template
 
         def _sim_ij(cj):
-            if cj not in self.counts:
+            if self.counts[cj] == 0:
                 return 0
             if cj < self.n_templates:
                 return sims[cj]

@@ -9,3 +9,4 @@ data
 *checkpoint.ipynb
 *.DS_Store
 json_files
+.vscode/
