@@ -47,12 +47,11 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     )
 
     n_clust = clusters.max() + 1
-    counts = bd.spikes_per_cluster(clusters, params["max_spikes"])
+    counts = bd.spikes_per_cluster(clusters)
     times_multi = bd.find_times_multi(
         times,
         clusters,
         np.arange(n_clust),
-        params["max_spikes"],
         data,
         params["pre_samples"],
         params["post_samples"],
@@ -99,7 +98,7 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
             data, ci, channel_pos, ext_params, params
         )
         # Train the autoencoder if needed.
-        model_path = (
+        model_path = ( 
             params["model_path"]
             if params["model_path"]
             else os.path.join(params["KS_folder"], "automerge", "ae.pt")

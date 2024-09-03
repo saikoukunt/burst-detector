@@ -49,12 +49,10 @@ class AutoMergeParams(ArgSchema):
         default=62,
         description="Number of samples to extract after the peak of the spike",
     )
-    max_spikes = (
-        Int(
-            required=False,
-            default=1000,
-            description="Maximum number of spikes per cluster used to calculate mean waveforms and cross projections (-1 uses all spikes)",
-        ),
+    max_spikes = Int(
+        required=False,
+        default=1000,
+        description="Maximum number of spikes per cluster used to calculate mean waveforms and cross projections (-1 uses all spikes)",
     )
     good_lbls = List(
         String,

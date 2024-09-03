@@ -78,7 +78,7 @@ def generate_train_data(
         ext_params["post_samples"] += 5
 
     # Pre-allocate memory for the snippets for good cluster
-    n_snip = np.sum(ci["counts"][good_ids])
+    n_snip = np.sum(np.minimum(ci["counts"][good_ids], params["max_spikes"]))
 
     spikes = torch.zeros(
         (
@@ -94,6 +94,10 @@ def generate_train_data(
     snip_idx = 0
     for id in tqdm(good_ids, desc="Generating snippets"):
         cl_times = ci["times_multi"][id].astype("int64")
+
+        if cl_times.shape[0] > params["max_spikes"]:
+            np.random.shuffle(cl_times)
+            cl_times = cl_times[: params["max_spikes"]]
 
         start_times = cl_times - ext_params["pre_samples"]
         end_times = cl_times + ext_params["post_samples"]
