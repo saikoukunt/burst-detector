@@ -40,7 +40,9 @@ def main() -> None:
 
     # count spikes per cluster, load quality labels
     counts = bd.spikes_per_cluster(clusters)
-    times_multi = bd.find_times_multi(times, clusters, np.arange(n_clust), data)
+    times_multi = bd.find_times_multi(
+        times, clusters, np.arange(n_clust), data
+    )
 
     # filter out low-spike/noise units
     good_ids = np.where(counts > params["min_spikes"])[0]
