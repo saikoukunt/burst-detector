@@ -23,13 +23,17 @@ def main() -> None:
         "total_time": tt,
         "num_merges": num_merge,
         "orig_clust": oc,
+        "mean_time": mst,
+        "xcorr_time": xct,
+        "ref_pen_time": rpt,
+        "merge_time": mt,
+        "total_time": tt,
+        "num_merges": num_merge,
+        "orig_clust": oc,
     }
 
     mod.output(output)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        sys.exit(1)
+    main()
