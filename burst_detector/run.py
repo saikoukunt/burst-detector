@@ -1,4 +1,3 @@
-import sys
 from typing import Any
 
 from argschema import ArgSchemaParser
@@ -16,13 +15,6 @@ def main() -> None:
     mst, xct, rpt, mt, tt, num_merge, oc = bd.run_merge(mod.args)
 
     output: dict[str, Any] = {
-        "mean_time": mst,
-        "xcorr_time": xct,
-        "ref_pen_time": rpt,
-        "merge_time": mt,
-        "total_time": tt,
-        "num_merges": num_merge,
-        "orig_clust": oc,
         "mean_time": mst,
         "xcorr_time": xct,
         "ref_pen_time": rpt,

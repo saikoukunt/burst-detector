@@ -1,14 +1,14 @@
 *.egg-info
-data
 *.phy
 *.bin
 *.ipynb_checkpoints
-*__pycache__
 *temp_wh
 *.dat
 *checkpoint.ipynb
 *.DS_Store
 *.code-workspace
+__pycache__/
+data/
 json_files/
 figures/
 notebooks/

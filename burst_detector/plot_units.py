@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from argschema import ArgSchemaParser
 from matplotlib.backends.backend_pdf import PdfPages
-from numpy.typing import NDArray
 from tqdm import tqdm
 
 import burst_detector as bd
