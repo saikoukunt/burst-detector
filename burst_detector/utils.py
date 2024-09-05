@@ -22,6 +22,12 @@ logger = logging.getLogger("burst-detector")
 
 
 def parse_args() -> dict[str, Any]:
+    """
+    Parse command line arguments for plot_units.py.
+    Returns:
+        dict[str, Any]: A dictionary containing the parsed arguments.
+    """
+    # code implementation...
     parser = argparse.ArgumentParser(description="Parse arguments for plot_units.py")
     # Define optional arguments
     parser.add_argument("--input_json", type=str, help="Path to JSON file of arguments")
@@ -72,7 +78,6 @@ def find_times_multi(
     sp_times: NDArray[np.float_],
     sp_clust: NDArray[np.int_],
     clust_ids: list[int],
-    max_spikes: int,
     data: NDArray[np.int_],
     pre_samples: int,
     post_samples: int,
@@ -84,7 +89,6 @@ def find_times_multi(
         sp_times (NDArray): Spike times (in any unit of time).
         sp_clust (NDArray): Spike cluster assignments.
         clust_ids (NDArray): Clusters for which spike times should be returned.
-        max_spikes (int): The maximum number of spikes to return for each cluster.
         data (NDArray): Ephys data with shape (# of timepoints, # of channels).
             Should be passed in as an np.memmap for large datasets.
         pre_samples (int): The number of samples to extract before the peak of the
@@ -112,21 +116,15 @@ def find_times_multi(
             cl_times[cl_to_ind[sp_clust[i]]].append(time)
     for i in range(len(cl_times)):
         cl_times[i] = np.array(cl_times[i])
-        if max_spikes != -1 and cl_times[i].shape[0] > max_spikes:
-            # random shuffle and take the first max_spikes
-            np.random.shuffle(cl_times[i])
-            cl_times[i] = cl_times[i][:max_spikes]
-
     return cl_times
 
 
-def spikes_per_cluster(sp_clust: NDArray[np.int_], max_spikes: int) -> NDArray[np.int_]:
+def spikes_per_cluster(sp_clust: NDArray[np.int_]) -> NDArray[np.int_]:
     """
     Counts the number of spikes in each cluster.
 
     Args
         sp_clust (NDArray): Spike cluster assignments.
-        max_spikes (int): The maximum number of spikes to count for each cluster.
 
     Returns
         counts_array (NDArray): Number of spikes per cluster, indexed by
@@ -136,8 +134,7 @@ def spikes_per_cluster(sp_clust: NDArray[np.int_], max_spikes: int) -> NDArray[n
     ids, counts = np.unique(sp_clust, return_counts=True)
     counts_array = np.zeros(ids.max() + 1, dtype=int)
     counts_array[ids] = counts
-    if max_spikes != -1:
-        counts_array[counts_array > max_spikes] = max_spikes
+
     return counts_array
 
 
@@ -179,11 +176,23 @@ def extract_spikes(
 
     # Randomly pick spikes if the cluster has too many
     if (max_spikes != -1) and (times.shape[0] > max_spikes):
-        logger.info("Too many spikes, randomly selecting...")
-        times = np.random.choice(times, size=max_spikes, replace=False)
+        np.random.shuffle(times)
+        times = times[:max_spikes]
 
-    # Extract spike data around each spike time
-    spikes = np.array([data[t - pre_samples : t + post_samples, :].T for t in times])
+    # Extract spike data around each spike time and avoid for loops for speed
+    start_times = times - pre_samples
+    n_spikes = len(start_times)
+    n_channels = data.shape[1]
+    n_samples = post_samples + pre_samples
+
+    # Create an array to store the spikes
+    spikes = np.empty((n_spikes, n_channels, n_samples), dtype=data.dtype)
+
+    # Use broadcasting to create index arrays for slicing
+    row_indices = np.arange(n_samples).reshape(-1, 1) + start_times
+
+    # Extract the spikes using advanced indexing
+    spikes = data[row_indices, :].transpose(1, 2, 0)
 
     return spikes
 
@@ -297,7 +306,10 @@ def get_closest_channels(
 
 
 def find_best_channels(
-    template: NDArray[np.float_], channel_pos: NDArray[np.float_], num_close: int
+    template: NDArray[np.float_],
+    channel_pos: NDArray[np.float_],
+    n_chan: int,
+    num_close: int,
 ) -> tuple[NDArray[np.int_], int]:
     """
     For a given waveform, finds the channels with the largest amplitude.
@@ -306,6 +318,7 @@ def find_best_channels(
         template (NDArray): The waveform to find the best channels for.
         channel_pos (NDArray): The XY coordinates of each channel on the probe
             (in arbitrary units).
+        n_chan (int): The number of channels on the probe.
         num_close (int): The number of closest channels to return, including the
             peak channel (channel with largest amplitude).
 
@@ -316,7 +329,7 @@ def find_best_channels(
 
     """
     amplitude: NDArray[np.float_] = template.max(axis=1) - template.min(axis=1)
-    peak_channel: int = min(int(np.argmax(amplitude)), 382)
+    peak_channel: int = min(int(np.argmax(amplitude)), n_chan - 3)
     close_chans: NDArray[np.int_] = get_closest_channels(
         channel_pos, peak_channel, num_close
     )
@@ -407,6 +420,8 @@ def temp_mismatch(
     clust_id: int,
     templates: list,
     channel_pos: NDArray[np.float_],
+    n_chan: int,
+    num_close: int,
     mean_wf: NDArray[np.float_],
 ) -> float:
     """
@@ -415,11 +430,15 @@ def temp_mismatch(
         clust_id (int): The ID of the cluster.
         templates (list): List of templates.
         channel_pos (NDArray): Array of channel positions.
+        n_chan (int): Number of channels.
+        num_close (int): Number of closest channels to consider.
         mean_wf (NDArray): Array of mean waveforms.
     Returns:
         mismatch (float): The magnitude and direction of the temporal mismatch.
     """
-    ch_ids, peak_channel = find_best_channels(templates[clust_id])
+    ch_ids, peak_channel = find_best_channels(
+        templates[clust_id], channel_pos, n_chan, num_close
+    )
 
     # calculate and rank distances (proximity)
     dists = get_dists(channel_pos, peak_channel, ch_ids)

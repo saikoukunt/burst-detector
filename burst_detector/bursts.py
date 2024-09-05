@@ -14,9 +14,9 @@ def base_algo(
 
     Args:
         spike_times (NDArray): Spike times in seconds.
-        state_ratio (float): The geometric ratio between the firing rates of
+        state_ratio (float, optional): The geometric ratio between the firing rates of
             adjacent HMM states. Defaults to 5, which seems appropriate empirically.
-        gamma (float): The cost coefficient of state transitions. Transition cost
+        gamma (float, optional): The cost coefficient of state transitions. Transition cost
             is 0 if transitioning to a lower state and gamma*(j-i) if transitioning
             to a higher state. Defaults to 0.3, which seems appropriate empirically.
 
@@ -41,12 +41,12 @@ def find_bursts(
 
     Args:
         spike_times (NDArray): Spike times in seconds.
-        state_ratio (float): The geometric ratio between the firing rates of
+        state_ratio (float, optional): The geometric ratio between the firing rates of
             adjacent HMM states. Defaults to 5, which seems appropriate empirically.
-        gamma (float): The cost coefficient of state transitions. Transition cost
+        gamma (float, optional): The cost coefficient of state transitions. Transition cost
             is 0 if transitioning to a lower state and gamma*(j-i) if transitioning
             to a higher state. Defaults to 0.3, which seems appropriate empirically.
-        max_iter (int): The maximum number of EM iterations to run. Defaults to 5.
+        max_iter (int, optional): The maximum number of EM iterations to run. Defaults to 5.
 
     Returns:
         bursts (pd.DataFrame): Onset and offsets of detected bursts.

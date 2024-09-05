@@ -32,8 +32,8 @@ def calc_wf_norms(wfs: NDArray[np.float_]) -> NDArray[np.float_]:
 def wf_means_similarity(
     mean_wf: NDArray[np.float_],
     cl_good: NDArray[np.bool_],
-    use_jitter: bool = False,
-    max_jitter: int = 4,
+    use_jitter,
+    max_jitter,
 ) -> tuple[NDArray[np.float_], NDArray[np.float_], NDArray[np.int_]]:
     """
     Calculates the normalized pairwise similarity (inner product) between pairs of
@@ -49,7 +49,7 @@ def wf_means_similarity(
             between waveforms. Defaults to False. Note that runtime scales linearly
             with jitter_amt if enabled.
         jitter_amt (int): The maximum amount of shift to search in both directions.
-            Defaults to 4. Note that runtime scales linearly with jitter_amt if enabled.
+            Note that runtime scales linearly with jitter_amt if enabled.
 
     Returns:
         mean_sim (NDArray): The (maximum) pairwise similarity for each pair of
@@ -125,59 +125,3 @@ def find_jitter(
             mean_sim = np.dot(m1.flatten(), m2.flatten())
             jitter = 0
     return mean_sim, jitter
-
-
-def cross_proj(
-    c1_spikes: NDArray[np.float_],
-    c2_spikes: NDArray[np.float_],
-    c1_mean: NDArray[np.float_],
-    c2_mean: NDArray[np.float_],
-    c1_norm: float,
-    c2_norm: float,
-    jitter: int = 0,
-) -> tuple[
-    NDArray[np.float_], NDArray[np.float_], NDArray[np.float_], NDArray[np.float_]
-]:
-    """
-    Returns the cross-projections (inner products) of spikes onto normalized mean
-    waveforms for a single pair of clusters.
-
-    Args:
-        c1_spikes (NDArray): Array of spike waveforms with shape (# spikes, # channels, # timepoints).
-        c2_spikes (NDArray): Array of spike waveforms with shape (# spikes, # channels, # timepoints).
-        c1_mean (NDArray): Cluster mean waveforms with shape (# channels, # timepoints)
-        c2_mean (NDArray): Cluster mean waveforms with shape (# channels, # timepoints)
-        c1_norm (float): Frobenius norms for the cluster mean waveforms.
-        c2_norm (float): Frobenius norms for the cluster mean waveforms.
-        jitter (float): Relative time shift between clusters, relative to c2.
-
-    Returns:
-        (proj_1on1, proj_2on1, proj_1on2, proj_2on2) (NDArray, NDArray, NDArray, NDArray): Projections
-             of spikes onto their own and opposite cluster means.
-    """
-    t_length: int = c1_spikes.shape[2]
-
-    if jitter < 0:
-        c1_spikes = c1_spikes[:, :, : t_length + jitter]
-        c1_mean = c1_mean[:, : t_length + jitter]
-        c2_spikes = c2_spikes[:, :, jitter * -1 :]
-        c2_mean = c2_mean[:, jitter * -1 :]
-    else:
-        c1_spikes = c1_spikes[:, :, jitter:]
-        c1_mean = c1_mean[:, jitter:]
-        c2_spikes = c2_spikes[:, :, : t_length - jitter]
-        c2_mean = c2_mean[:, : t_length - jitter]
-
-    proj_1on1: NDArray[np.float_] = np.zeros((c1_spikes.shape[0]))
-    proj_2on1: NDArray[np.float_] = np.zeros((c2_spikes.shape[0]))
-    proj_1on2: NDArray[np.float_] = np.zeros((c1_spikes.shape[0]))
-    proj_2on2: NDArray[np.float_] = np.zeros((c2_spikes.shape[0]))
-
-    norm: float = max(c1_norm, c2_norm)
-    for i in range(c1_spikes.shape[0]):
-        proj_1on1[i] = np.dot(c1_spikes[i].flatten(), c1_mean.flatten()) / (c1_norm**2)
-        proj_1on2[i] = np.dot(c1_spikes[i].flatten(), c2_mean.flatten()) / (norm**2)
-    for i in range(c2_spikes.shape[0]):
-        proj_2on1[i] = np.dot(c2_spikes[i].flatten(), c1_mean.flatten()) / (norm**2)
-        proj_2on2[i] = np.dot(c2_spikes[i].flatten(), c2_mean.flatten()) / (c2_norm**2)
-    return proj_1on1, proj_2on1, proj_1on2, proj_2on2

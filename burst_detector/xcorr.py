@@ -42,9 +42,9 @@ def bin_spike_trains(
 def x_correlogram(
     c1_times: NDArray[np.float_],
     c2_times: NDArray[np.float_],
-    window_size: float = 0.1,
-    bin_width: float = 0.001,
-    overlap_tol: float = 0,
+    window_size: float,
+    bin_width: float,
+    overlap_tol: float,
 ) -> tuple[NDArray[np.float_], int]:
     """
     Calculates the cross correlogram between two spike trains.
@@ -106,9 +106,9 @@ def x_correlogram(
 
 def auto_correlogram(
     c1_times: NDArray[np.float_],
-    window_size: float = 0.25,
-    bin_width: float = 0.001,
-    overlap_tol: float = 0,
+    window_size: float,
+    bin_width: float,
+    overlap_tol: float,
 ) -> NDArray[np.float_]:
     """
     Calculates the auto correlogram for a spike train.
@@ -116,11 +116,9 @@ def auto_correlogram(
     Args:
         c1_times (NDArray): Spike times (sorted least to greatest)
             in seconds.
-        window_size (float, optional): Width of cross correlogram window in seconds.
-            Defaults to 100 ms.
-        bin_width (float, optional): Width of cross correlogram bins in seconds.
-            Defaults to 1 ms.
-        overlap_tol (float, optional): Overlap tolerance in seconds. Spikes within
+        window_size (float): Width of cross correlogram window in seconds.
+        bin_width (float): Width of cross correlogram bins in seconds.
+        overlap_tol (float): Overlap tolerance in seconds. Spikes within
             the tolerance of the reference spike time will not be counted for cross
             correlogram calculation.
 
@@ -167,8 +165,8 @@ def xcorr_sig(
     null_xgram: NDArray[np.float_],
     window_size: float,
     xcorr_bin_width: float,
-    max_window: float = 0.25,
-    min_xcorr_rate: float = 0,
+    max_window: float,
+    min_xcorr_rate: float,
 ) -> float:
     """
     Calculates a cross-correlation significance metric for a cluster pair.
@@ -187,8 +185,8 @@ def xcorr_sig(
         xcorr_bin_width (float): The width in seconds of the bin size of the
             input ccgs.
         max_window (float): The largest allowed window size during window
-            expansion. Defaults to 250 ms.
-        min_xcorr_rate (float): The minimum ccg firing rate in Hz. Defaults to 0 Hz.
+            expansion.
+        min_xcorr_rate (float): The minimum ccg firing rate in Hz.
 
     Returns:
         sig (float): The calculated cross-correlation significance metric.

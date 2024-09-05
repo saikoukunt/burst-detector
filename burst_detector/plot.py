@@ -186,7 +186,7 @@ def plot_corr(
             times_multi[clust[i]] / 30000,
             window_size,
             bin_size,
-            overlap_tol=overlap_tol,
+            overlap_tol,
         )
 
         ax = plt.subplot(n_clust, n_clust, (i * n_clust) + (i + 1))
@@ -213,7 +213,7 @@ def plot_corr(
             times_multi[clust[j]] / 30000,
             window_size,
             bin_size,
-            overlap_tol=overlap_tol,
+            overlap_tol,
         )[0]
         ax = plt.subplot(n_clust, n_clust, i * n_clust + (j + 1))
         ax.set_facecolor("black")
@@ -224,9 +224,9 @@ def plot_corr(
         ax.set_yticks([0, ccg.max()])
 
         if i > j:
-            ax.bar(range(len(ccg)), ccg[::-1], width=1, color=LIGHT_COLORS[i])  # type: ignore
+            ax.bar(range(len(ccg)), ccg[::-1], width=1, color=LIGHT_COLORS[i])
         else:
-            ax.bar(range(len(ccg)), ccg, width=1, color=LIGHT_COLORS[i])  # type: ignore
+            ax.bar(range(len(ccg)), ccg, width=1, color=LIGHT_COLORS[i])
 
         ax.tick_params(
             axis="x",

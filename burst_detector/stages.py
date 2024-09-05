@@ -56,8 +56,8 @@ def calc_mean_sim(
         pass_ms (NDArray): True if a cluster pair passes the mean similarity
             threshold, false otherwise.
     """
-    cl_good: NDArray[np.bool_] = np.zeros(n_clust, dtype=bool)
-    unique: NDArray[np.int_] = np.unique(clusters)
+    cl_good = np.zeros(n_clust, dtype=bool)
+    unique = np.unique(clusters)
     for i in range(n_clust):
         if (
             (i in unique)
@@ -67,15 +67,12 @@ def calc_mean_sim(
             cl_good[i] = True
 
     # calculate mean similarity
-    mean_sim: NDArray[np.float_]
-    wf_norms: NDArray[np.float_]
-    offset: NDArray[np.int_]
     mean_sim, wf_norms, offset = bd.wf_means_similarity(
         mean_wf, cl_good, use_jitter=params["jitter"], max_jitter=params["jitter_amt"]
     )
 
     # check which cluster pairs pass threshold
-    pass_ms: NDArray[np.bool_] = np.zeros_like(mean_sim, dtype="bool")
+    pass_ms = np.zeros_like(mean_sim, dtype="bool")
     for c1 in range(n_clust):
         for c2 in range(c1 + 1, n_clust):
             if mean_sim[c1, c2] >= params["sim_thresh"] and (
@@ -99,7 +96,7 @@ def calc_ae_sim(
     peak_chans: NDArray[np.int_],
     spk_data: bd.SpikeDataset,
     cl_good: NDArray[np.bool_],
-    do_shft: bool = False,
+    do_shft: bool,
     zDim: int = 15,
     sf: int = 1,
 ) -> tuple[
@@ -119,10 +116,10 @@ def calc_ae_sim(
         cl_good (NDArray): Cluster quality labels.
         do_shft (bool): True if model and spk_data are for an autoencoder explicitly
             trained on time-shifted snippets.
-        zDim (int): Latent dimensionality of CN_AE. Defaults to 15.
-        sf (float): Scaling factor for peak channels appended to latent vector. This
+        zDim (int, optional): Latent dimensionality of CN_AE. Defaults to 15.
+        sf (float, optional): Scaling factor for peak channels appended to latent vector. This
             does not affect the similarity calculation, only the returned `spk_lat_peak`
-            array.
+            array. Defaults to 1.
 
     Returns:
         ae_sim (NDArray): Pairwise autoencoder-based similarity. ae_sim[i,j] = 1
@@ -144,8 +141,8 @@ def calc_ae_sim(
     # calculate latent representations of spikes
     loss = 0
     with torch.no_grad():
-        for spks, lab in tqdm(dl, desc="Calculating latent representations"):
-            spks, lab = spks.to(device), lab.to(device)
+        for idx, data in enumerate(tqdm(dl, desc="Calculating latent representations")):
+            spks, lab = data[0].to(device), data[1].to(device)
             if do_shft:
                 spks = spks[:, :, :, 5:-5]
             targ = spks.clone()
@@ -156,8 +153,8 @@ def calc_ae_sim(
             out = model.encoder(
                 spks if not do_shft else rec
             )  # does this need to be (net.encoder(net(spks)) for time-shift?
-            start_idx = len(spk_lat) * len(dl) // len(spk_data)
-            end_idx = start_idx + len(spks)
+            start_idx = idx * 128
+            end_idx = start_idx + 128
             spk_lat[start_idx:end_idx] = out.cpu().detach().numpy()
             spk_lab[start_idx:end_idx] = lab.cpu().detach().numpy()
 
@@ -228,7 +225,7 @@ def calc_xcorr_metric(
         n_clust (int): The number of clusters, taken to be the largest cluster id + 1.
         pass_ms (NDArray): True if a cluster pair passes the mean similarity
             threshold, false otherwise.
-        params (dict): General SpECtr params.
+        params (dict): General burst-detector params.
 
     Returns:
         xcorr_sig (NDArray): The calculated cross-correlation significance metric
@@ -253,10 +250,9 @@ def calc_xcorr_metric(
     res = pool.starmap(xcorr_job, args)
 
     # convert cross correlogram output to np arrays
-    xgrams: NDArray[np.float_] = np.empty_like(pass_ms, dtype="object")
-    x_olaps: NDArray[np.int_] = np.zeros_like(pass_ms, dtype="int16")
-    null_xgrams: NDArray[np.float_] = np.empty_like(pass_ms, dtype="object")
-    shfl_olaps: NDArray[np.int_] = np.zeros_like(pass_ms, dtype="int16")
+    xgrams = np.empty_like(pass_ms, dtype="object")
+    x_olaps = np.zeros_like(pass_ms, dtype="int16")
+    null_xgrams = np.empty_like(pass_ms, dtype="object")
 
     for i in range(len(res)):
         c1 = args[i][0]
@@ -357,7 +353,7 @@ def merge_clusters(
         mean_wf (NDArray): Cluster mean waveforms with shape (# of clusters,
             # channels, # timepoints).
         final_metric (NDArray): Final metric values for each cluster pair.
-        params (dict): General SpECtr params.
+        params (dict): General burst-detector params.
 
     Returns:
         old2new (dict): Map from pre-merge cluster ID to post-merge cluster ID.
@@ -451,7 +447,7 @@ def xcorr_func(
         c1 (int): The ID of the first cluster.
         c2 (int): The ID of the second cluster.
         times_multi (list): Spike times in samples indexed by cluster id.
-        params (dict): General SpECtr parameters.
+        params (dict): General burst-detector parameters.
 
     Returns:
         ccg (NDArray): The computed cross-correlogram.
@@ -467,9 +463,9 @@ def xcorr_func(
     return bd.x_correlogram(
         c1_times,
         c2_times,
-        window_size=params["max_window"],
-        bin_width=params["xcorr_bin_width"],
-        overlap_tol=params["overlap_tol"],
+        params["max_window"],
+        params["xcorr_bin_width"],
+        params["overlap_tol"],
     )
 
 
@@ -487,7 +483,7 @@ def ref_p_func(
         c1 (int): The ID of the first cluster.
         c2 (int): The ID of the second cluster.
         times_multi (list): Spike times in samples indexed by cluster id.
-        params (dict): General SpECtr parameters.
+        params (dict): General burst-detector parameters.
 
     Returns:
         ref_pen (float): The computed refractory period penalty.
@@ -508,9 +504,9 @@ def ref_p_func(
     ccg = bd.x_correlogram(
         c1_times,
         c2_times,
-        bin_width=params["ref_pen_bin_width"] / 1000,
-        window_size=2,
-        overlap_tol=params["overlap_tol"],
+        params["ref_pen_bin_width"] / 1000,
+        2,
+        params["overlap_tol"],
     )[0]
 
     # Average the halves of the cross-correlogram.
