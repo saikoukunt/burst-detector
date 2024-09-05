@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from argschema import ArgSchemaParser
 from matplotlib.backends.backend_pdf import PdfPages
+from numpy.typing import NDArray
 from tqdm import tqdm
 
 import burst_detector as bd
@@ -34,10 +35,8 @@ def main() -> None:
     data = np.reshape(rawData, (int(rawData.size / params["n_chan"]), params["n_chan"]))
 
     # count spikes per cluster, load quality labels
-    counts = bd.spikes_per_cluster(clusters, params["max_spikes"])
-    times_multi = bd.find_times_multi(
-        times, clusters, np.arange(n_clust), params["max_spikes"], data
-    )
+    counts = bd.spikes_per_cluster(clusters)
+    times_multi = bd.find_times_multi(times, clusters, np.arange(n_clust), data)
 
     # filter out low-spike/noise units
     good_ids = np.where(counts > params["min_spikes"])[0]

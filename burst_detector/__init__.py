@@ -11,7 +11,6 @@ from burst_detector.autoencoder import (
 from burst_detector.bursts import base_algo, find_bursts
 from burst_detector.cluster_metrics import (
     calc_wf_norms,
-    cross_proj,
     wf_means_similarity,
 )
 from burst_detector.plot import plot_corr, plot_merges, plot_wfs

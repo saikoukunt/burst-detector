@@ -144,8 +144,8 @@ def calc_ae_sim(
     # calculate latent representations of spikes
     loss = 0
     with torch.no_grad():
-        for spks, lab in tqdm(dl, desc="Calculating latent representations"):
-            spks, lab = spks.to(device), lab.to(device)
+        for idx, data in enumerate(tqdm(dl, desc="Calculating latent representations")):
+            spks, lab = data[0].to(device), data[1].to(device)
             if do_shft:
                 spks = spks[:, :, :, 5:-5]
             targ = spks.clone()
@@ -156,8 +156,8 @@ def calc_ae_sim(
             out = model.encoder(
                 spks if not do_shft else rec
             )  # does this need to be (net.encoder(net(spks)) for time-shift?
-            start_idx = len(spk_lat) * len(dl) // len(spk_data)
-            end_idx = start_idx + len(spks)
+            start_idx = idx * 128
+            end_idx = start_idx + 128
             spk_lat[start_idx:end_idx] = out.cpu().detach().numpy()
             spk_lab[start_idx:end_idx] = lab.cpu().detach().numpy()
 

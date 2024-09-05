@@ -46,12 +46,11 @@ def run_merge(params: dict[str, Any]) -> tuple[str, str, str, str, str, int, int
     data = np.reshape(rawData, (int(rawData.size / params["n_chan"]), params["n_chan"]))
 
     n_clust = clusters.max() + 1
-    counts = bd.spikes_per_cluster(clusters, params["max_spikes"])
+    counts = bd.spikes_per_cluster(clusters)
     times_multi = bd.find_times_multi(
         times,
         clusters,
         np.arange(n_clust),
-        params["max_spikes"],
         data,
         params["pre_samples"],
         params["post_samples"],
