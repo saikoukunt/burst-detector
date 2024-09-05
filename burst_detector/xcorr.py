@@ -7,9 +7,6 @@ import math
 import numpy as np
 import scipy
 from numpy.typing import NDArray
-from torch import int32
-
-import burst_detector as bd
 
 
 def bin_spike_trains(
@@ -18,12 +15,14 @@ def bin_spike_trains(
     """
     Splits two input spike trains into bins.
 
-    ### Args:
-        - `c1_times`, `c2_times` (np.ndarray): The spike trains in seconds.
-        - `bin_width` (float): The width of bins in seconds.
+    Args:
+        c1_times (NDArray): Spike trains in seconds.
+        c2_times (NDArray): Spike trains in seconds.
+        bin_width (float): The width of bins in seconds.
 
-    ### Returns:
-        - `c1_counts`, `c2_counts` (np.ndarray): The binned spike counts.
+    Returns:
+        c1_counts (NDArray): Binned spike counts
+        c2_counts (NDArray): Binned spike counts.
     """
     c1_counts: NDArray[np.float_] = np.zeros(
         (math.ceil(max(c1_times) / bin_width)), dtype="int32"
@@ -50,30 +49,28 @@ def x_correlogram(
     """
     Calculates the cross correlogram between two spike trains.
 
-    ### Args:
-        -`c1_times`, `c2_times` (np.ndarray): Spike times (sorted least to greatest)
-            in seconds.
-        -`window_size` (float, optional): Width of cross correlogram window in seconds.
+    Args:
+        c1_times (NDArray): Spike times in seconds.
+        c2_times (NDArray): Spike times in seconds.
+        window_size (float, optional): Width of cross correlogram window in seconds.
             Defaults to 100 ms.
-        -`bin_width` (float, optional): Width of cross correlogram bins in seconds.
+        bin_width (float, optional): Width of cross correlogram bins in seconds.
             Defaults to 1 ms.
-        -`overlap_tol` (float, optional): Overlap tolerance in seconds. Spikes within
+        overlap_tol (float, optional): Overlap tolerance in seconds. Spikes within
             the tolerance of the reference spike time will not be counted for cross
             correlogram calculation.
 
-    ### Returns:
-        -`corrgram` (np.ndarray): The calculated cross-correlogram.
-        -`overlap` (int): The number of overlapping spikes.
+    Returns:
+        corrgram (NDArray): The calculated cross-correlogram.
+        overlap (int): The number of overlapping spikes.
     """
     # Call the cluster with more spikes c1.
-    if c1_times.shape[0] < c2_times.shape[0]:
-        temp = c1_times
-        c1_times = c2_times
-        c2_times = temp
+    corrgram = np.zeros((math.ceil(window_size / bin_width)))
 
-    corrgram: NDArray[np.float_] = np.zeros((math.ceil(window_size / bin_width)))
     overlap = 0
     c2_start = 0
+    if c1_times.shape[0] < c2_times.shape[0]:
+        c1_times, c2_times = c2_times, c1_times
 
     # To calculate the cross-correlogram, we iterate over c1 spikes as reference spikes
     # and count the number of c2 spikes that fall within window_size of the
@@ -82,9 +79,9 @@ def x_correlogram(
         while (c2_start < c2_times.shape[0]) and (
             c2_times[c2_start] < (c1_times[ref_spk] - window_size / 2)
         ):
-            c2_start: int = c2_start + 1  # c2_start tracks the first in-window spike.
+            c2_start += 1  # c2_start tracks the first in-window spike.
 
-        spk_idx: int = c2_start  # spk_idx iterates over in-window c2 spikes.
+        spk_idx = c2_start  # spk_idx iterates over in-window c2 spikes.
         if spk_idx >= c2_times.shape[0]:
             continue
 
@@ -92,7 +89,7 @@ def x_correlogram(
             c2_times[spk_idx] < (c1_times[ref_spk] + window_size / 2)
         ):
             if abs(c1_times[ref_spk] - c2_times[spk_idx]) > overlap_tol:
-                bin_idx: int = min(
+                bin_idx = min(
                     math.floor(
                         (c1_times[ref_spk] - c2_times[spk_idx] + window_size / 2)
                         / bin_width
@@ -116,21 +113,21 @@ def auto_correlogram(
     """
     Calculates the auto correlogram for a spike train.
 
-    ### Args:
-        -`c1_times` (np.ndarray): Spike times (sorted least to greatest)
+    Args:
+        c1_times (NDArray): Spike times (sorted least to greatest)
             in seconds.
-        -`window_size` (float, optional): Width of cross correlogram window in seconds.
+        window_size (float, optional): Width of cross correlogram window in seconds.
             Defaults to 100 ms.
-        -`bin_width` (float, optional): Width of cross correlogram bins in seconds.
+        bin_width (float, optional): Width of cross correlogram bins in seconds.
             Defaults to 1 ms.
-        -`overlap_tol` (float, optional): Overlap tolerance in seconds. Spikes within
+        overlap_tol (float, optional): Overlap tolerance in seconds. Spikes within
             the tolerance of the reference spike time will not be counted for cross
             correlogram calculation.
 
-    ### Returns:
-        -`corrgram` (np.ndarray): The calculated cross-correlogram.
+    Returns:
+        corrgram (NDArray): The calculated cross-correlogram.
     """
-    corrgram: NDArray[np.float_] = np.zeros((math.ceil(window_size / bin_width)))
+    corrgram = np.zeros((math.ceil(window_size / bin_width)))
     start = 0
 
     # To calculate the auto-correlogram, we iterate over spikes as reference spikes
@@ -140,9 +137,9 @@ def auto_correlogram(
         while (start < c1_times.shape[0]) and (
             c1_times[start] < (c1_times[ref_spk] - window_size / 2)
         ):
-            start: int = start + 1  # start tracks the first in-window spike.
+            start += 1  # start tracks the first in-window spike.
 
-        spk_idx: int = start  # spk_idx iterates over in-window spikes.
+        spk_idx = start  # spk_idx iterates over in-window spikes.
         if spk_idx >= c1_times.shape[0]:
             continue
 
@@ -152,7 +149,7 @@ def auto_correlogram(
             if (ref_spk != spk_idx) and (
                 abs(c1_times[ref_spk] - c1_times[spk_idx]) > overlap_tol
             ):
-                gram_ind: int = min(
+                gram_ind = min(
                     math.floor(
                         (c1_times[ref_spk] - c1_times[spk_idx] + window_size / 2)
                         / bin_width
@@ -160,7 +157,7 @@ def auto_correlogram(
                     corrgram.shape[0] - 1,
                 )
                 corrgram[gram_ind] += 1
-            spk_idx: int = spk_idx + 1
+            spk_idx += 1
 
     return corrgram
 
@@ -182,19 +179,19 @@ def xcorr_sig(
     distances from null by chance, so we first try to expand the window size. If
     that fails to yield enough spikes, we apply a penalty to the metric.
 
-    ### Args:
-        - `xgram` (np.ndarray): The raw cross-correlogram for the cluster pair.
-        - `null_dist` (np.ndarray): The null cross-correlogram for the cluster pair.
+    Args:
+        xgram (NDArray): The raw cross-correlogram for the cluster pair.
+        null_dist (NDArray): The null cross-correlogram for the cluster pair.
             In practice, this is usually a uniform distribution.
-        - `window_size` (float): The width in seconds of the default ccg window.
-        - `xcorr_bin_width` (float): The width in seconds of the bin size of the
+        window_size (float): The width in seconds of the default ccg window.
+        xcorr_bin_width (float): The width in seconds of the bin size of the
             input ccgs.
-        - `max_window` (float): The largest allowed window size during window
+        max_window (float): The largest allowed window size during window
             expansion. Defaults to 250 ms.
-        - `min_xcorr_rate` (float): The minimum ccg firing rate in Hz. Defaults to 0 Hz.
+        min_xcorr_rate (float): The minimum ccg firing rate in Hz. Defaults to 0 Hz.
 
-    ### Returns:
-        - `sig` (float): The calculated cross-correlation significance metric.
+    Returns:
+        sig (float): The calculated cross-correlation significance metric.
     """
     num_bins_half: int = math.ceil(round(window_size / xcorr_bin_width) / 2)
     start_idx = int(xgram.shape[0] / 2 - num_bins_half)

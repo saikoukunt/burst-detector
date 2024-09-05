@@ -11,15 +11,12 @@ from burst_detector.autoencoder import (
 from burst_detector.bursts import base_algo, find_bursts
 from burst_detector.cluster_metrics import (
     calc_wf_norms,
-    cross_proj,
     wf_means_similarity,
 )
-from burst_detector.eval_metrics import calc_fr_unif
-from burst_detector.plot import plot_merges
+from burst_detector.plot import plot_corr, plot_merges, plot_wfs
 from burst_detector.schemas import AutoMergeParams, OutputParams
 from burst_detector.stages import (
     calc_ae_sim,
-    calc_cross_sim,
     calc_mean_sim,
     calc_ref_p,
     calc_xcorr_metric,
@@ -44,7 +41,7 @@ logger = logging.getLogger("burst-detector")
 logger.setLevel(logging.DEBUG)
 
 console = logging.StreamHandler(sys.stdout)
-formatter = logging.Formatter("%(levelname)s: %(message)s")
+formatter = logging.Formatter("%(message)s")
 console.setFormatter(formatter)
 
 logger.addHandler(console)

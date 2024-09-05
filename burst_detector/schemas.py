@@ -1,23 +1,6 @@
-from lib2to3.fixes.fix_has_key import FixHasKey
-from pydoc import cli
-from urllib import request
-
-from argschema import ArgSchema, ArgSchemaParser
-from argschema.fields import (
-    Bool,
-    Dict,
-    Float,
-    InputDir,
-    InputFile,
-    Int,
-    List,
-    Nested,
-    NumpyArray,
-    String,
-)
+from argschema import ArgSchema
+from argschema.fields import Bool, Float, InputDir, InputFile, Int, List, String
 from argschema.schemas import DefaultSchema
-from pandas import describe_option
-from traitlets import default
 
 
 class AutoMergeParams(ArgSchema):
@@ -88,8 +71,6 @@ class AutoMergeParams(ArgSchema):
         description="Number of spikes threshold for a cluster to undergo further stages.",
     )
 
-    # n_iter = Int(required=False, default=50, description="The number of shuffle iterations for the baseline cross-correlation")
-    # shuffle_bin_width = Float(required=False, default=0.1, description="The width of bins in seconds for spike train shuffling")
     window_size = Float(
         required=False,
         default=0.025,
@@ -116,14 +97,6 @@ class AutoMergeParams(ArgSchema):
         description="Spike count threshold (per second) for cross correlograms. Cluster pairs whose cross correlogram spike rate is lower than the threshold will have a penalty applied to their cross correlation metric",
     )
 
-    # xcorr_ref_p = Float(required=False, default=0.001, description="Length of refractory period in seconds")
-    # ref_pers = List(
-    #     Float,
-    #     required=False,
-    #     cli_as_single_argument=True,
-    #     default=[0.001, 0.002, 0.004],
-    #     description="List of potential refractory period lengths (in s)",
-    # )
     ref_pen_bin_width = Float(
         required=False,
         default=1,
@@ -244,8 +217,6 @@ class AutomergeGUIParams(ArgSchema):
         description="Number of spikes threshold for a cluster to undergo further stages.",
     )
 
-    # n_iter = Int(required=False, default=50, description="The number of shuffle iterations for the baseline cross-correlation")
-    # shuffle_bin_width = Float(required=False, default=0.1, description="The width of bins in seconds for spike train shuffling")
     window_size = Float(
         required=False,
         default=0.025,
@@ -272,7 +243,6 @@ class AutomergeGUIParams(ArgSchema):
         description="Spike count threshold (per second) for cross correlograms. Cluster pairs whose cross correlogram spike rate is lower than the threshold will have a penalty applied to their cross correlation metric",
     )
 
-    # xcorr_ref_p = Float(required=False, default=0.001, description="Length of refractory period in seconds")
     ref_pers = List(
         Float,
         required=False,

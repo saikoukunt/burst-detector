@@ -14,7 +14,7 @@ import burst_detector as bd
 logger = logging.getLogger("burst-detector")
 
 
-def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
+def run_merge(params: dict[str, Any]) -> tuple[str, str, str, str, str, int, int]:
     if not torch.cuda.is_available():
         logger.warning("CUDA not available, running on CPU.")
 
@@ -43,7 +43,7 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     # Compute useful cluster info.
     # Load the ephys recording.
     rawData = np.memmap(params["data_filepath"], dtype=params["dtype"], mode="r")
-    data: NDArray[np.int16] = np.reshape(
+    data = np.reshape(
         rawData, (int(rawData.size / params["n_chan"]), params["n_chan"])
     )
 
@@ -73,22 +73,22 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
 
     peak_chans = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf, 2), 1)
 
-    t0: float = time.time()
+    t0 = time.time()
 
     logger.info("Done, calculating cluster similarity...")
-    sim: NDArray[np.float_] = np.ndarray(0)
+    sim = np.ndarray(0)
 
     # Autoencoder-based similarity calculation.
     if params["sim_type"] == "ae":
         spk_fld: str = os.path.join(params["KS_folder"], "automerge", "spikes")
-        ci: dict[str, Any] = {
+        ci = {
             "times_multi": times_multi,
             "counts": counts,
             "good_ids": good_ids,
             "labels": cl_labels,
             "mean_wf": mean_wf,
         }
-        ext_params: dict[str, Any] = {
+        ext_params = {
             "spk_fld": spk_fld,
             "pre_samples": params["ae_pre"],
             "post_samples": params["ae_post"],
@@ -119,10 +119,10 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
             logger.info(f"Autoencoder saved in {model_path}")
         else:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            net: bd.CN_AE = bd.CN_AE().to(device)
+            net = bd.CN_AE().to(device)
             net.load_state_dict(torch.load(model_path))
             net.eval()
-            spk_data: bd.SpikeDataset = bd.SpikeDataset(spk_snips, cl_ids)
+            spk_data = bd.SpikeDataset(spk_snips, cl_ids)
 
         # Calculate similarity using distances in the autoencoder latent space.
         sim, _, _, _ = bd.calc_ae_sim(
@@ -132,34 +132,32 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     elif params["sim_type"] == "mean":
         # Calculate similarity using inner products between waveforms.
         sim, _, _, mean_wf, pass_ms = bd.calc_mean_sim(
-            data, times_multi, clusters, counts, n_clust, cl_labels, mean_wf, params
+            clusters, counts, n_clust, cl_labels, mean_wf, params
         )
         sim[pass_ms == False] = 0
     pass_ms = sim > params["sim_thresh"]
     logger.info(f"Found {pass_ms.sum() / 2} candidate cluster pairs")
-    t1: float = time.time()
-    mean_sim_time: str = time.strftime("%H:%M:%S", time.gmtime(t1 - t0))
+    t1 = time.time()
+    mean_sim_time = time.strftime("%H:%M:%S", time.gmtime(t1 - t0))
 
     # Calculate a significance metric for cross-correlograms.
     logger.info("Calculating cross-correlation metric...")
     xcorr_sig, _, _ = bd.calc_xcorr_metric(times_multi, n_clust, pass_ms, params)
 
-    t4: float = time.time()
-    xcorr_time: str = time.strftime("%H:%M:%S", time.gmtime(t4 - t1))
+    t4 = time.time()
+    xcorr_time = time.strftime("%H:%M:%S", time.gmtime(t4 - t1))
     # Calculate a refractor period penalty.
     logger.info("Calculating refractory period penalty...")
-    ref_pen, _ = bd.calc_ref_p(
-        times_multi, clusters, n_clust, pass_ms, xcorr_sig, params
-    )
-    t5: float = time.time()
-    ref_pen_time: str = time.strftime("%H:%M:%S", time.gmtime(t5 - t4))
+    ref_pen, _ = bd.calc_ref_p(times_multi, n_clust, pass_ms, xcorr_sig, params)
+    t5 = time.time()
+    ref_pen_time = time.strftime("%H:%M:%S", time.gmtime(t5 - t4))
 
     # Calculate the final metric.
     logger.info("Calculating final metric...")
     final_metric = np.zeros_like(sim)
     for c1 in range(n_clust):
         for c2 in range(c1, n_clust):
-            met: float = (
+            met = (
                 sim[c1, c2]
                 + params["xcorr_coeff"] * xcorr_sig[c1, c2]
                 - params["ref_pen_coeff"] * ref_pen[c1, c2]
@@ -170,11 +168,9 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
 
     # Calculate/perform merges.
     logger.info("Merging...")
-    old2new, new2old = bd.merge_clusters(
-        clusters, counts, mean_wf, final_metric, params
-    )
+    old2new, new2old = bd.merge_clusters(clusters, mean_wf, final_metric, params)
 
-    t6: float = time.time()
+    t6 = time.time()
     merge_time: str = time.strftime("%H:%M:%S", time.gmtime(t6 - t5))
     logger.info("Writing to output...")
     with open(
@@ -187,11 +183,11 @@ def run_merge(params: dict) -> tuple[str, str, str, str, str, int, int]:
     ) as file:
         file.write(json.dumps(new2old, separators=(",\n", ":")))
 
-    merges: list[list[int]] = list(new2old.values())
+    merges = list(new2old.values())
 
     bd.plot_merges(merges, times_multi, mean_wf, std_wf, spikes, params)
 
-    t7: float = time.time()
+    t7 = time.time()
     total_time: str = time.strftime("%H:%M:%S", time.gmtime(t7 - t0))
 
     return (

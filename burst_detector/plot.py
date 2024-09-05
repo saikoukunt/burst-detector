@@ -1,49 +1,90 @@
 import math
 import os
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.figure import Figure
+from numpy.typing import NDArray
+from tqdm import tqdm
 
 import burst_detector as bd
 
 
 ### PLOTTING CODE
 def plot_merges(
-    merges,
-    times_multi,
-    mean_wf,
-    std_wf,
-    spikes,
-    params,
-    nchan=20,
-    start=10,
-    stop=60,
-    window_size=0.102,
-    bin_size=0.001,
-):
-    for merge in merges:
+    merges: list,
+    times_multi: list,
+    mean_wf: NDArray[np.float_],
+    std_wf: NDArray[np.float_],
+    spikes: NDArray[np.float_],
+    params: dict[str, Any],
+    nchan: int = 20,
+    start: int = 10,
+    stop: int = 60,
+    window_size: float = 0.102,
+    bin_size: float = 0.001,
+) -> None:
+    """
+    Plot the merges by generating waveform and correlation plots.
+    Args:
+        merges (list): List of merges to plot.
+        times_multi (list): List of timestamps for each merge.
+        mean_wf (NDArray): Mean waveform data.
+        std_wf (NDArray): Standard deviation of waveform data.
+        spikes (NDArray): Spike data.
+        params (dict): Parameters for plotting.
+        nchan (int, optional): Number of channels. Defaults to 20.
+        start (int, optional): Start time for plotting. Defaults to 10.
+        stop (int, optional): Stop time for plotting. Defaults to 60.
+        window_size (float, optional): Window size for correlation plot. Defaults to 0.102.
+        bin_size (float, optional): Bin size for correlation plot. Defaults to 0.001.
+    """
+    for merge in tqdm(merges, desc="Plotting merges"):
         merge.sort()
         wf_plot = plot_wfs(merge, mean_wf, std_wf, spikes, nchan, start, stop)
         corr_plot = plot_corr(merge, times_multi, params, window_size, bin_size)
 
+        merge_str = "_".join(map(str, merge))
         name = os.path.join(
             params["KS_folder"],
             "automerge",
             "merges",
-            "merge" + "".join(["_" + str(cl) for cl in merge]) + ".pdf",
+            f"merge_{merge_str}.pdf",
         )
-        file = PdfPages(name)
-        file.savefig(wf_plot, dpi=300)
-        file.savefig(corr_plot, dpi=300)
-        file.close()
+
+        with PdfPages(name) as file:
+            file.savefig(wf_plot, dpi=300)
+            file.savefig(corr_plot, dpi=300)
 
         plt.close(wf_plot)
         plt.close(corr_plot)
 
 
-def plot_wfs(clust, mean_wf, std_wf, spikes, nchan=10, start=10, stop=60):
-    peak_chans = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf, 2), 1)
+def plot_wfs(
+    clust: list[int],
+    mean_wf: NDArray[np.float_],
+    std_wf: NDArray[np.float_],
+    spikes: NDArray,
+    nchan: int = 10,
+    start: int = 10,
+    stop: int = 60,
+) -> Figure:
+    """
+    Plot waveforms for specified clusters.
+    Args:
+        clust (list): List of cluster indices.
+        mean_wf (NDArray): Array of mean waveforms for each cluster.
+        std_wf (NDArray): Array of standard deviation of waveforms for each cluster.
+        spikes (NDArray): Array of spike waveforms for each cluster.
+        nchan (int, optional): Number of channels to plot. Defaults to 10.
+        start (int, optional): Start index of waveform plot. Defaults to 10.
+        stop (int, optional): Stop index of waveform plot. Defaults to 60.
+    Returns:
+        matplotlib.figure.Figure: The generated figure object.
+    """
+    peak_chans = np.argmax(np.ptp(mean_wf, axis=2), axis=1)
     peak = int(np.mean(peak_chans[clust]))
 
     fig, axes = plt.subplots(
@@ -81,116 +122,133 @@ def plot_wfs(clust, mean_wf, std_wf, spikes, nchan=10, start=10, stop=60):
         ind = i - ch_start
         or_ind = ind * len(clust) + 1
 
-        for cl in range(len(clust)):
+        for cl, id in enumerate(clust):
             p_ind = or_ind + cl
-            a = plt.subplot(math.ceil(nchan / 2), 2 * len(clust), p_ind)
-            a.set_facecolor("black")
-            # plt.ylabel(i)
-
-            for j in range(min(200, spikes[clust[cl]].shape[0])):
-                (line,) = plt.plot(
-                    spikes[clust[cl]][j, i, start:stop],
-                    label=str(clust[cl]),
-                    color=colors[cl],
+            ax = plt.subplot(math.ceil(nchan / 2), 2 * len(clust), p_ind)
+            ax.set_facecolor("black")
+            for j in range(min(200, spikes[id].shape[0])):
+                (line,) = ax.plot(
+                    spikes[id][j, i, start:stop],
+                    label=str(id),
+                    color=COLORS[cl],
                     linewidth=0.25,
                 )
-            lines.append(line)  # type: ignore
-            plt.ylim([ymin, ymax])
+            lines.append(line)
+            ax.set_ylim([ymin, ymax])
 
-            a.spines["top"].set_visible(False)
-            a.spines["right"].set_visible(False)
-            # a.spines["bottom"].set_visible(False)
-            # a.spines["left"].set_visible(False)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
 
-            plt.tick_params(
-                axis="x",  # changes apply to the x-axis
-                which="both",  # both major and minor ticks are affected
-                bottom=False,  # ticks along the bottom edge are off
-                top=False,  # ticks along the top edge are off
+            ax.tick_params(
+                axis="x",
+                which="both",
+                bottom=False,
+                top=False,
                 labelbottom=False,
-            )  # labels along the bottom edge are off
-            plt.tick_params(
-                axis="y",  # changes apply to the x-axis
-                which="both",  # both major and minor ticks are affected
-                left=False,  # ticks along the bottom edge are off
-                right=False,  # ticks along the top edge are off
+            )
+            ax.tick_params(
+                axis="y",
+                which="both",
+                left=False,
+                right=False,
                 labelleft=False,
-            )  # labels along the bottom edge are off
+            )
 
     for ax, row in zip(axes[:, 0], range(ch_start, ch_stop, 2)):
         ax.set_ylabel(row, rotation=90, size="large")
     for ax, row in zip(axes[:, len(clust)], range(ch_start + 1, ch_stop, 2)):
         ax.set_ylabel(row, rotation=90, size="large")
 
-    # fig.tight_layout()
     fig.legend(lines, clust)
 
     return fig
 
 
-def plot_corr(clust, times_multi, params, window_size=0.102, bin_size=0.001):
-    fig, axes = plt.subplots(len(clust), len(clust), figsize=(10, 5))
+def plot_corr(
+    clust: list[int],
+    times_multi: list[NDArray[np.float_]],
+    params: dict[str, Any],
+    window_size: float = 0.102,
+    bin_size: float = 0.001,
+) -> Figure:
+    """
+    Plots the auto and cross correlograms for a given set of clusters.
+    Args:
+        clust (list): List of cluster indices.
+        times_multi (list): List of spike times for each cluster.
+        params (dict): Dictionary of parameters.
+        window_size (float): Size of the correlation window in seconds. Default is 0.102.
+        bin_size (float): Size of the correlation bin in seconds. Default is 0.001.
+    Returns:
+        fig (Figure): The generated figure.
+    """
+    n_clust = len(clust)
+    fig, axes = plt.subplots(n_clust, n_clust, figsize=(10, 5))
 
-    # auto
-    for i in range(len(clust)):
+    overlap_tol = params.get("overlap_tol", 10 / 30000)
+
+    # auto correlograms
+    for i in range(n_clust):
         acg = bd.auto_correlogram(
-            times_multi[clust[i]] / 30000, window_size, bin_size, overlap_tol=10 / 30000
+            times_multi[clust[i]] / 30000,
+            window_size,
+            bin_size,
+            overlap_tol=overlap_tol,
         )
 
-        a = plt.subplot(len(clust), len(clust), (i * len(clust)) + (i + 1))
-        a.set_facecolor("black")
-        a.set_yticks([0, acg.max()])
-        plt.bar(range(len(acg)), acg, width=1, color=colors[i])  # type: ignore
+        ax = plt.subplot(n_clust, n_clust, (i * n_clust) + (i + 1))
+        ax.set_facecolor("black")
+        ax.set_yticks([0, acg.max()])
+        plt.bar(range(len(acg)), acg, width=1, color=COLORS[i])
 
-        a.spines["top"].set_visible(False)
-        a.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
         plt.tick_params(
-            axis="x",  # changes apply to the x-axis
-            which="both",  # both major and minor ticks are affected
-            bottom=False,  # ticks along the bottom edge are off
-            top=False,  # ticks along the top edge are off
+            axis="x",
+            which="both",
+            bottom=False,
+            top=False,
             labelbottom=False,
-        )  # labels along the bottom edge are off
+        )
 
-    # cross
-    for i in range(len(clust)):
-        for j in range(len(clust)):
-            if i != j:
-                ccg = bd.x_correlogram(
-                    times_multi[clust[i]] / 30000,
-                    times_multi[clust[j]] / 30000,
-                    window_size,
-                    bin_size,
-                    overlap_tol=params["overlap_tol"],
-                )[0]
-                a = plt.subplot(len(clust), len(clust), i * len(clust) + (j + 1))
-                a.set_facecolor("black")
+    cross_pairs = [(i, j) for i in range(n_clust) for j in range(n_clust) if i != j]
 
-                a.spines["top"].set_visible(False)
-                a.spines["right"].set_visible(False)
+    # cross correlograms
+    for i, j in cross_pairs:
+        ccg = bd.x_correlogram(
+            times_multi[clust[i]] / 30000,
+            times_multi[clust[j]] / 30000,
+            window_size,
+            bin_size,
+            overlap_tol=overlap_tol,
+        )[0]
+        ax = plt.subplot(n_clust, n_clust, i * n_clust + (j + 1))
+        ax.set_facecolor("black")
 
-                a.set_yticks([0, ccg.max()])
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
-                if i > j:
-                    plt.bar(range(len(ccg)), ccg[::-1], width=1, color=light_colors[i])  # type: ignore
-                else:
-                    plt.bar(range(len(ccg)), ccg, width=1, color=light_colors[i])  # type: ignore
+        ax.set_yticks([0, ccg.max()])
 
-                plt.xlabel
+        if i > j:
+            ax.bar(range(len(ccg)), ccg[::-1], width=1, color=LIGHT_COLORS[i])  # type: ignore
+        else:
+            ax.bar(range(len(ccg)), ccg, width=1, color=LIGHT_COLORS[i])  # type: ignore
 
-                plt.tick_params(
-                    axis="x",  # changes apply to the x-axis
-                    which="both",  # both major and minor ticks are affected
-                    bottom=False,  # ticks along the bottom edge are off
-                    top=False,  # ticks along the top edge are off
-                    labelbottom=False,
-                )  # labels along the bottom edge are off
+        ax.tick_params(
+            axis="x",
+            which="both",
+            bottom=False,
+            top=False,
+            labelbottom=False,
+        )
 
-    for ax, col in zip(axes[-1], clust):
-        ax.set_xlabel(col, size="large")
+    if n_clust > 1:
+        for ax, col in zip(axes[-1], clust):
+            ax.set_xlabel(col, size="large")
 
-    for ax, row in zip(axes[:, 0], clust):
-        ax.set_ylabel(row, rotation=0, size="large")
+        for ax, row in zip(axes[:, 0], clust):
+            ax.set_ylabel(row, rotation=0, size="large")
 
     fig.tight_layout()
 
@@ -199,7 +257,7 @@ def plot_corr(clust, times_multi, params, window_size=0.102, bin_size=0.001):
 
 ## COLOR ARRAYS
 
-light_colors = [
+LIGHT_COLORS = [
     (229 / 255, 239 / 255, 254 / 255),
     (254 / 255, 231 / 255, 230 / 255),
     (234 / 255, 249 / 255, 234 / 255),
@@ -212,7 +270,7 @@ light_colors = [
     (243 / 255, 243 / 255, 240 / 255),
 ]
 
-colors = [
+COLORS = [
     (0.3528824480447752, 0.5998034969453555, 0.9971704175788023),
     (0.9832565730779054, 0.3694984452949815, 0.3488265255379734),
     (0.4666666666666667, 0.8666666666666667, 0.4666666666666667),

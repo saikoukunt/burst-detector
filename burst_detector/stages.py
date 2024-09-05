@@ -1,18 +1,15 @@
 import functools
-import itertools
 import logging
-import math
+import multiprocessing as mp
 from collections import deque
 from typing import Any, Callable
 
-import multiprocess as mp
 import numpy as np
 import pandas as pd
 import scipy.spatial.distance as dist
 import torch
 import torch.nn as nn
 from numpy.typing import NDArray
-from scipy.stats import wasserstein_distance
 from sklearn.neighbors import NearestNeighbors
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -23,8 +20,6 @@ logger = logging.getLogger("burst-detector")
 
 
 def calc_mean_sim(
-    data: NDArray[np.int_],
-    times: list[NDArray[np.float_]],
     clusters: NDArray[np.int_],
     counts: NDArray[np.int_],
     n_clust: int,
@@ -41,27 +36,24 @@ def calc_mean_sim(
     """
     Calculates inner product similarity using mean waveforms.
 
-    ### Args:
-        - `data` (np.ndarray): Ephys data with shape (# of timepoints, # of channels).
-            Should be passed in as an np.memmap for large datasets.
-        - `times` (np.ndarray): Spike times (in any unit of time).
-        - `clusters` (np.ndarray): Spike cluster assignments.
-        - `counts` (NDArray): Number of spikes per cluster.
-        - `n_clust` (int): The number of clusters, taken to be the largest cluster id + 1.
-        - `labels` (pd.Dataframe): Cluster quality labels.
-        - `mean_wf` (np.ndarray): Cluster mean waveforms with shape (# of clusters,
+    Args:
+        clusters (NDArray): Spike cluster assignments.
+        counts (NDArray): Number of spikes per cluster.
+        n_clust (int): The number of clusters, taken to be the largest cluster id + 1.
+        labels (pd.Dataframe): Cluster quality labels.
+        mean_wf (NDArray): Cluster mean waveforms with shape (# of clusters,
             # channels, # timepoints).
-        - `params` (dict): General SpECtr params.
+        params (dict): General SpECtr params.
 
-    ### Returns:
-        - `mean_sim` (np.ndarray): The (maximum) pairwise similarity for each pair of
+    Returns:
+        mean_sim (NDArray): The (maximum) pairwise similarity for each pair of
             (normalized) waveforms.
-        - `offset` (np.ndarray): If jitter is enabled, the shift that produces the
+        offset (NDArray): If jitter is enabled, the shift that produces the
             max inner product for each pair of waveforms.
-        - `wf_norms` (np.ndarray): Calculated waveform norms.
-        - `mean_wf` (np.ndarray): Cluster mean waveforms with shape (# of clusters,
+        wf_norms (NDArray): Calculated waveform norms.
+        mean_wf (NDArray): Cluster mean waveforms with shape (# of clusters,
             # channels, # timepoints).
-        - `pass_ms` (np.ndarray): True if a cluster pair passes the mean similarity
+        pass_ms (NDArray): True if a cluster pair passes the mean similarity
             threshold, false otherwise.
     """
     cl_good: NDArray[np.bool_] = np.zeros(n_clust, dtype=bool)
@@ -102,14 +94,14 @@ def calc_mean_sim(
 
 
 def calc_ae_sim(
-    mean_wf,
-    model,
-    peak_chans,
-    spk_data,
-    cl_good,
-    do_shft=False,
-    zDim=15,
-    sf=1,
+    mean_wf: NDArray[np.float_],
+    model: nn.Module,
+    peak_chans: NDArray[np.int_],
+    spk_data: bd.SpikeDataset,
+    cl_good: NDArray[np.bool_],
+    do_shft: bool = False,
+    zDim: int = 15,
+    sf: int = 1,
 ) -> tuple[
     NDArray[np.float_], NDArray[np.float_], NDArray[np.float_], NDArray[np.int_]
 ]:
@@ -221,59 +213,6 @@ def calc_ae_sim(
     return ae_sim, spk_lat_peak, lat_mean, spk_lab
 
 
-def calc_cross_sim(spikes, offset, mean_wf, wf_norms, pass_ms, n_clust):
-    """
-    DEPRECATED: Calculates the cross-projection based cluster similiarity.
-    """
-    wass_d = np.ones_like(offset, dtype="float64")
-    num = 0
-
-    for c1 in range(n_clust):
-        for c2 in range(c1 + 1, n_clust):
-            if pass_ms[c1, c2]:
-                num += 1
-
-                # extract spikes
-                sp_1 = spikes[c1]
-                sp_2 = spikes[c2]
-
-                # compute cross-projections
-                proj_1on1, proj_2on1, proj_1on2, proj_2on2 = bd.cross_proj(
-                    sp_1,
-                    sp_2,
-                    mean_wf[c1],
-                    mean_wf[c2],
-                    wf_norms[c1],
-                    wf_norms[c2],
-                    jitter=offset[c1, c2],
-                )
-
-                # bound outliers
-                dist_1on1 = proj_1on1 / proj_1on1
-                dist_1on1[np.isnan(dist_1on1)] = 0
-
-                dist_2on2 = proj_2on2 / proj_2on2
-                dist_2on2[np.isnan(dist_2on2)] = 0
-
-                dist_1on2 = proj_1on2 / proj_1on1
-                dist_1on2[dist_1on2 > 1] = 1
-                dist_1on2[dist_1on2 < 0] = 0
-                dist_1on2[np.isnan(dist_1on2)] = 0
-
-                dist_2on1 = proj_2on1 / proj_2on2
-                dist_2on1[dist_2on1 > 1] = 1
-                dist_2on1[dist_2on1 < 0] = 0
-                dist_2on1[np.isnan(dist_2on1)] = 0
-
-                # compute wasserstein distances
-                wass_d[c1, c2] = wasserstein_distance(dist_1on1, dist_1on2)
-                wass_d[c2, c1] = wasserstein_distance(dist_2on2, dist_2on1)
-
-    cross_sim = 1 - wass_d
-
-    return cross_sim
-
-
 def calc_xcorr_metric(
     times_multi: list[NDArray[np.float_]],
     n_clust: int,
@@ -284,20 +223,19 @@ def calc_xcorr_metric(
     Calculates the cross-correlogram significance metric between each candidate pair of
     clusters.
 
-    ### Args:
-        - `times_multi` (list): Spike times in samples indexed by cluster id.
-        - `n_clust` (int): The number of clusters, taken to be the largest cluster id + 1.
-        - `pass_ms` (np.ndarray): True if a cluster pair passes the mean similarity
+    Args:
+        times_multi (list): Spike times in samples indexed by cluster id.
+        n_clust (int): The number of clusters, taken to be the largest cluster id + 1.
+        pass_ms (NDArray): True if a cluster pair passes the mean similarity
             threshold, false otherwise.
-        - `params` (dict): General SpECtr params.
+        params (dict): General SpECtr params.
 
-    ### Returns:
-        - `xcorr_sig` (np.ndarray): The calculated cross-correlation significance metric
+    Returns:
+        xcorr_sig (NDArray): The calculated cross-correlation significance metric
             for each cluster pair.
-        - `xgrams` (np.ndarray): Calculated cross-correlograms for each cluster pair.
-        - `null_xgrams` (np.ndarray): Null distribution (uniforms) cross-correlograms
+        xgrams (NDArray): Calculated cross-correlograms for each cluster pair.
+        null_xgrams (NDArray): Null distribution (uniforms) cross-correlograms
             for each cluster pair.
-
     """
 
     # define cross correlogram job
@@ -349,7 +287,6 @@ def calc_xcorr_metric(
 
 def calc_ref_p(
     times_multi: list[NDArray[np.float_]],
-    clusters: NDArray[np.int_],
     n_clust: int,
     pass_ms: NDArray[np.bool_],
     xcorr_sig: NDArray[np.float_],
@@ -359,21 +296,20 @@ def calc_ref_p(
     Calculates the cross-correlogram significance metric between each candidate pair of
     clusters.
 
-    ### Args:
-    - `times_multi` (list): Spike times in samples indexed by cluster id..
-    - `clusters` (np.ndarray): Spike cluster assignments.
-    - `n_clust` (int): The number of clusters, taken to be the largest cluster id + 1.
-    - `pass_ms` (np.ndarray): True if a cluster pair passes the mean similarity
-        threshold, false otherwise.
-    - `xcorr_sig` (np.ndarray): The calculated cross-correlation significance metric
-        for each cluster pair.
-    - `params` (dict): General SpECtr params.
+    Args:
+        times_multi (list): Spike times in samples indexed by cluster id..
+        n_clust (int): The number of clusters, taken to be the largest cluster id + 1.
+        pass_ms (NDArray): True if a cluster pair passes the mean similarity
+            threshold, false otherwise.
+        xcorr_sig (NDArray): The calculated cross-correlation significance metric
+            for each cluster pair.
+        params (dict): General SpECtr params.
 
-    ### Returns:
-    - `ref_pen` (np.ndarray): The calculated refractory period penalty for each pair of
-        clusters.
-    - `ref_per` (np.ndarray): The inferred refractory period that was used to calculate
-        the refractory period penalty.
+    Returns:
+        ref_pen (NDArray): The calculated refractory period penalty for each pair of
+            clusters.
+        ref_per (NDArray): The inferred refractory period that was used to calculate
+            the refractory period penalty.
     """
     # define refractory penalty job
     ref_p_job: Callable = functools.partial(
@@ -409,7 +345,6 @@ def calc_ref_p(
 
 def merge_clusters(
     clusters: NDArray[np.int_],
-    counts: NDArray[np.int_],
     mean_wf: NDArray[np.float_],
     final_metric: NDArray[np.float_],
     params: dict[str, Any],
@@ -419,7 +354,6 @@ def merge_clusters(
 
     Args:
         clusters (NDArray): Spike cluster assignments.
-        counts (NDArray): Number of spikes per cluster, indexed by cluster id.
         mean_wf (NDArray): Cluster mean waveforms with shape (# of clusters,
             # channels, # timepoints).
         final_metric (NDArray): Final metric values for each cluster pair.
@@ -432,8 +366,6 @@ def merge_clusters(
             Intermediate/unused/unchanged cluster IDs do not appear.
 
     """
-    cl_max = clusters.max()
-
     # find channel with peak amplitude for each cluster
     peak_chans = np.argmax(np.max(mean_wf, 2) - np.min(mean_wf, 2), 1)
 
@@ -515,14 +447,14 @@ def xcorr_func(
     Multithreading function definition for calculating a cross-correlogram for a
     candidate cluster pair.
 
-    ### Args:
-        - `c1` (int): The ID of the first cluster.
-        - `c2` (int): The ID of the second cluster.
-        - `times_multi` (list): Spike times in samples indexed by cluster id.
-        - `params` (dict): General SpECtr parameters.
+    Args:
+        c1 (int): The ID of the first cluster.
+        c2 (int): The ID of the second cluster.
+        times_multi (list): Spike times in samples indexed by cluster id.
+        params (dict): General SpECtr parameters.
 
-    ### Returns:
-        - `ccg` (np.ndarray): The computed cross-correlogram.
+    Returns:
+        ccg (NDArray): The computed cross-correlogram.
 
     """
     import burst_detector as bd
@@ -551,15 +483,15 @@ def ref_p_func(
     Multithreading function definition for calculating the refractory period penalty for
     a candidate cluster pair.
 
-    ### Args:
-        - `c1` (int): The ID of the first cluster.
-        - `c2` (int): The ID of the second cluster.
-        - `times_multi` (list): Spike times in samples indexed by cluster id.
-        - `params` (dict): General SpECtr parameters.
+    Args:
+        c1 (int): The ID of the first cluster.
+        c2 (int): The ID of the second cluster.
+        times_multi (list): Spike times in samples indexed by cluster id.
+        params (dict): General SpECtr parameters.
 
-    ### Returns:
-        - `ref_pen` (float): The computed refractory period penalty.
-        - `ref_per` (float): The inferred refractory period.
+    Returns:
+        ref_pen (float): The computed refractory period penalty.
+        ref_per (float): The inferred refractory period.
 
     """
 
@@ -606,11 +538,7 @@ def ref_p_func(
         * bin_rate
         * params["max_viol"]
     )
-
     # Compute confidence of less than thresh contamination at each refractory period.
-    # confs = np.zeros(sum_res.shape[0])
-    # for j, cnt in enumerate(sum_res):
-    #     confs[j] = 1 - poisson.cdf(cnt, max_contam[j])
     confs = np.zeros(sum_res.shape[0])
     for j, cnt in enumerate(sum_res):
         if max_contam[j] > 3:
