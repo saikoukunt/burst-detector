@@ -1,5 +1,4 @@
 import os
-import sys
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -57,7 +56,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        sys.exit(1)
+    main()
