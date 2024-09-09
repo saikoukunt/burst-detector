@@ -248,16 +248,39 @@ class SimilarityParams(Schema):
     )
 
 
+class PlotParams(Schema):
+    plot_corr_window_size = Float(
+        required=False,
+        missing=0.102,
+        description="Window size for correlation plot",
+    )
+    plot_corr_bin_size = Float(
+        required=False,
+        missing=0.001,
+        description="Bin size for correlation plot",
+    )
+    plot_overlap_tol = Float(
+        required=False,
+        missing=10 / 30000,
+        description="Overlap tolerance IN MS for correlation plot",
+    )
+
+
 class CustomMetricsParams(KSParams, WaveformParams):
     pass
 
 
-class PlotUnitsParams(KSParams, WaveformParams, CorrelogramParams):
+class PlotUnitsParams(KSParams, WaveformParams, PlotParams, CorrelogramParams):
     pass
 
 
 class RunParams(
-    KSParams, WaveformParams, CorrelogramParams, RefractoryParams, SimilarityParams
+    KSParams,
+    WaveformParams,
+    CorrelogramParams,
+    RefractoryParams,
+    SimilarityParams,
+    PlotParams,
 ):
     output_json = InputFile(
         required=False,

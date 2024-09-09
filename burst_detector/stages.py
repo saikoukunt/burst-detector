@@ -474,7 +474,7 @@ def ref_p_func(
     c2: int,
     times_multi: list[NDArray[np.float_]],
     params: dict[str, Any],
-):
+) -> tuple[float, float]:
     """
     Multithreading function definition for calculating the refractory period penalty for
     a candidate cluster pair.
@@ -504,9 +504,9 @@ def ref_p_func(
     ccg = bd.x_correlogram(
         c1_times,
         c2_times,
-        params["ref_pen_bin_width"] / 1000,
-        2,
-        params["overlap_tol"],
+        window_size=2,
+        bin_width=params["ref_pen_bin_width"] / 1000,
+        overlap_tol=params["overlap_tol"],
     )[0]
 
     # Average the halves of the cross-correlogram.

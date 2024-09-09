@@ -177,9 +177,10 @@ def plot_corr(
     n_clust = len(clust)
     fig, axes = plt.subplots(n_clust, n_clust, figsize=(10, 5))
 
-    overlap_tol = params.get("overlap_tol", 10 / 30000)
-    window_size = params["window_size"]
-    bin_size = params["xcorr_bin_width"]
+    window_size = params["plot_corr_window_size"]
+    bin_size = params["plot_corr_bin_size"]
+    overlap_tol = params["plot_overlap_tol"]
+
     # auto correlograms
     for i in range(n_clust):
         acg = bd.auto_correlogram(

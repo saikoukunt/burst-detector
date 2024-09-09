@@ -75,7 +75,7 @@ def x_correlogram(
     # To calculate the cross-correlogram, we iterate over c1 spikes as reference spikes
     # and count the number of c2 spikes that fall within window_size of the
     # reference spike.
-    for ref_spk in range((c1_times.shape[0])):
+    for ref_spk in range(c1_times.shape[0]):
         while (c2_start < c2_times.shape[0]) and (
             c2_times[c2_start] < (c1_times[ref_spk] - window_size / 2)
         ):
@@ -99,7 +99,7 @@ def x_correlogram(
                 corrgram[bin_idx] += 1
             else:
                 overlap += 1
-            spk_idx = spk_idx + 1
+            spk_idx += 1
 
     return corrgram, overlap
 

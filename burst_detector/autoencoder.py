@@ -80,7 +80,10 @@ def generate_train_data(
         ext_params["post_samples"] += 5
 
     # Pre-allocate memory for the snippets for good cluster
-    n_snip = np.sum(np.minimum(ci["counts"][good_ids], params["max_spikes"]))
+    if params["max_spikes"] == -1:
+        n_snip = np.sum(ci["counts"][good_ids])
+    else:
+        n_snip = np.sum(np.minimum(ci["counts"][good_ids], params["max_spikes"]))
 
     spikes = torch.zeros(
         (

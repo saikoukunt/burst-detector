@@ -4,6 +4,7 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
+from marshmallow import EXCLUDE
 from numpy.typing import NDArray
 from scipy import signal, stats
 from tqdm import tqdm
@@ -73,7 +74,7 @@ def calc_metrics() -> None:
     Calculate various metrics for spike sorting.
     """
     args = bd.parse_args()
-    schema = CustomMetricsParams()
+    schema = CustomMetricsParams(unknown=EXCLUDE)
     params = schema.load(args)
 
     ks_folder = params["KS_folder"]

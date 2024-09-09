@@ -2,13 +2,15 @@ import json
 import os
 from typing import Any
 
+from marshmallow import EXCLUDE
+
 import burst_detector as bd
 from burst_detector.schemas import OutputParams, RunParams
 
 
 def main() -> None:
     args = bd.parse_args()
-    schema = RunParams()
+    schema = RunParams(unknown=EXCLUDE)
     params = schema.load(args)
     mst, xct, rpt, mt, tt, num_merge, oc = bd.run_merge(params)
 

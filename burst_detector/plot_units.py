@@ -2,6 +2,7 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
+from marshmallow import EXCLUDE
 from matplotlib.backends.backend_pdf import PdfPages
 from tqdm import tqdm
 
@@ -11,7 +12,7 @@ from burst_detector.schemas import PlotUnitsParams
 
 def main() -> None:
     args = bd.parse_args()
-    schema = PlotUnitsParams()
+    schema = PlotUnitsParams(unknown=EXCLUDE)
     params = schema.load(args)
 
     automerge = os.path.join(params["KS_folder"], "automerge")
