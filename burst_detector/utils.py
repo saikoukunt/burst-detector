@@ -23,12 +23,12 @@ logger = logging.getLogger("burst-detector")
 
 def parse_args() -> dict[str, Any]:
     """
-    Parse command line arguments for plot_units.py.
+    Parse command line arguments for burst-detector, including plot_units.py, run.py, and custom_metrics.py.
     Returns:
         dict[str, Any]: A dictionary containing the parsed arguments.
     """
     # code implementation...
-    parser = argparse.ArgumentParser(description="Parse arguments for plot_units.py")
+    parser = argparse.ArgumentParser(description="Parse arguments for burst-detector")
     # Define optional arguments
     parser.add_argument("--input_json", type=str, help="Path to JSON file of arguments")
     parser.add_argument("--KS_folder", type=str, help="Path to Kilosort folder")
