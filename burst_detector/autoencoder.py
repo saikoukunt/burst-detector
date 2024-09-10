@@ -70,7 +70,7 @@ def generate_train_data(
     chans = {}
     for id in good_ids:
         chs, peak = bd.find_best_channels(
-            ci["mean_wf"][id], channel_pos, ext_params["num_chan"]
+            ci["mean_wf"][id], channel_pos, params["n_chan"], ext_params["num_chan"]
         )
         dists = bd.get_dists(channel_pos, peak, chs)
         chans[id] = chs[np.argsort(dists)].tolist()
@@ -80,7 +80,10 @@ def generate_train_data(
         ext_params["post_samples"] += 5
 
     # Pre-allocate memory for the snippets for good cluster
-    n_snip = np.sum(np.minimum(ci["counts"][good_ids], params["max_spikes"]))
+    if params["max_spikes"] == -1:
+        n_snip = np.sum(ci["counts"][good_ids])
+    else:
+        n_snip = np.sum(np.minimum(ci["counts"][good_ids], params["max_spikes"]))
 
     spikes = torch.zeros(
         (
@@ -121,8 +124,8 @@ class SpikeDataset(Dataset):
     Attributes:
         spikes (torch.Tensor): Spike snippets.
         labels (NDArray): Cluster ids for each snippet.
-        transform (function): Transform to apply to snippets.
-        target_transform (function): Transform to apply to labels.
+        transform (function, optional): Transform to apply to snippets.
+        target_transform (function, optional): Transform to apply to labels.
     """
 
     def __init__(

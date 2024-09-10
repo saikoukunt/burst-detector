@@ -4,63 +4,33 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
+from marshmallow import EXCLUDE
 from numpy.typing import NDArray
 from scipy import signal, stats
 from tqdm import tqdm
 
 import burst_detector as bd
+from burst_detector.schemas import CustomMetricsParams
 
 logger = logging.getLogger("burst-detector")
 
 
 # --------------------------------------------- DATA HANDLING HELPERS -------------------------------------------------
-def find_times_multi(sp_times: NDArray, sp_clust: NDArray, clust_ids: list) -> list:
-    """
-    Finds all the spike times for each of the specified clusters.
-
-    Args:
-        sp_times (NDArray): 1-D array containing all spike times.
-        sp_clust (NDArray): 1-D array containing the cluster identity of each spike.
-        clust_ids (list): The cluster IDs of the desired spike times.
-
-    Returns:
-        cl_times (list): list of NumPy arrays of the spike times for each of the specified clusters.
-    """
-
-    # init big list and reverse dictionary
-    cl_times = []
-    cl2lind = {}
-    for i in np.arange(len(clust_ids)):
-        cl_times.append([])
-        cl2lind[clust_ids[i]] = i
-
-    # count spikes in each cluster
-    for i in np.arange(sp_times.shape[0]):
-        if sp_clust[i] in cl2lind:
-            cl_times[cl2lind[sp_clust[i]]].append(sp_times[i])
-
-    # convert inner lists to numpy arrays
-    for i in range(len(cl_times)):
-        cl_times[i] = np.array(cl_times[i])
-
-    return cl_times
-
-
 def extract_noise(
     data: NDArray,
     times: NDArray,
-    pre_samples: int = 20,
-    post_samples: int = 62,
-    n_chan: int = 385,
+    pre_samples: int,
+    post_samples: int,
+    n_chan: int,
 ) -> NDArray:
     """
     Extracts noise snippets from the given data based on the provided spike times.
     Args:
         data (NDArray): The input data array.
         times (NDArray): The spike times array.
-        pre_samples (int, optional): The number of samples to include before each spike time. Defaults to 20.
-        post_samples (int, optional): The number of samples to include after each spike time. Defaults to 62.
-        n_chan (int, optional): The number of channels. Defaults to 385.
+        pre_samples (int): The number of samples to include before each spike time.
+        post_samples (int): The number of samples to include after each spike time.
+        n_chan (int): The number of channels.
     Returns:
         NDArray: The noise snippets array.
     """
@@ -99,49 +69,55 @@ def extract_noise(
     return noise
 
 
-def calc_metrics(ks_folder: str, data_filepath: str, n_chan: int) -> None:
+def calc_metrics() -> None:
     """
     Calculate various metrics for spike sorting.
-    Args:
-        ks_folder (str): The path to the folder containing Kilosort output files.
-        data_filepath (str): The path to the raw data file.
-        n_chan (int): The number of channels in the raw data.
     """
+    args = bd.parse_args()
+    schema = CustomMetricsParams(unknown=EXCLUDE)
+    params = schema.load(args)
+
+    ks_folder = params["KS_folder"]
+    data_filepath = params["data_filepath"]
+    n_chan = params["n_chan"]
+
     # load stuff
     times = np.load(os.path.join(ks_folder, "spike_times.npy")).flatten()
     clusters = np.load(os.path.join(ks_folder, "spike_clusters.npy")).flatten()
     n_clust = clusters.max() + 1
-    times_multi = find_times_multi(times, clusters, np.arange(clusters.max() + 1))
     channel_pos = np.load(os.path.join(ks_folder, "channel_positions.npy"))
 
     rawData = np.memmap(data_filepath, dtype=np.int16, mode="r")
     data = np.reshape(rawData, (int(rawData.size / n_chan), n_chan))
+
+    times_multi = bd.find_times_multi(
+        times,
+        clusters,
+        np.arange(clusters.max() + 1),
+        data,
+        params["pre_samples"],
+        params["post_samples"],
+    )
 
     # skip empty ids
     good_ids = np.unique(clusters)
     cl_good = np.zeros(n_clust, dtype=bool)
     cl_good[good_ids] = True
 
-    # TODO clean this up with your schema
-    params = {
-        "pre_samples": 20,
-        "post_samples": 62,
-        "n_chan": n_chan,
-        "max_spikes": 1000,
-        "KS_folder": ks_folder,
-    }
     mean_wf, _, _ = bd.calc_mean_and_std_wf(
         params, n_clust, good_ids, times_multi, data, return_spikes=False
     )
 
     logger.info("Calculating background standard deviation...")
-    noise = extract_noise(data, times, 20, 62, n_chan=n_chan)
+    noise = extract_noise(
+        data, times, params["pre_samples"], params["post_samples"], n_chan
+    )
     noise_stds = np.std(noise, axis=1)
 
-    snrs = calc_SNR(mean_wf, noise_stds, cl_good)
+    snrs = calc_SNR(mean_wf, noise_stds, cl_good, n_chan)
     slid_rp_viols = calc_sliding_RP_viol(times_multi, cl_good, n_clust)
     num_peaks, num_troughs, wf_durs, spat_decays = calc_wf_shape_metrics(
-        mean_wf, cl_good, channel_pos, 0.2
+        mean_wf, cl_good, channel_pos, n_chan, 0.2
     )
 
     # make dataframes
@@ -166,12 +142,27 @@ def calc_metrics(ks_folder: str, data_filepath: str, n_chan: int) -> None:
     wf_df.to_csv(os.path.join(ks_folder, "cluster_wf_shape.tsv"), sep="\t")
 
 
-def calc_SNR(mean_wf, noise_stds, cl_good):
+def calc_SNR(
+    mean_wf: NDArray[np.float_],
+    noise_stds: NDArray[np.float_],
+    cl_good: NDArray[np.bool_],
+    n_chan: int,
+) -> NDArray[np.float_]:
+    """
+    Calculates the signal-to-noise ratio (SNR) for each waveform.
+    Parameters:
+    - mean_wf (NDArray): Array of shape (n_waveforms, n_samples, n_channels) representing the mean waveforms.
+    - noise_stds (NDArray): Array of shape (n_channels,) representing the standard deviation of the noise for each channel.
+    - cl_good (NDArray): Boolean array of shape (n_waveforms,) indicating whether each waveform is considered good or not.
+    - n_chan (int): Number of channels.
+    Returns:
+    - snrs (NDArray): Array of shape (n_waveforms,) representing the SNR for each waveform.
+    """
 
     logger.info("Calculating peak channels and amplitudes")
     # calculate peak chans, amplitudes
     peak_chans = np.argmax(np.max(np.abs(mean_wf), axis=-1), axis=-1)
-    peak_chans[peak_chans == 384] = 383
+    peak_chans[peak_chans == n_chan - 1] = n_chan - 2
     amps = np.max(np.max(np.abs(mean_wf), axis=-1), axis=-1)
 
     # calculate snrs
@@ -255,6 +246,7 @@ def calc_wf_shape_metrics(
     mean_wf: NDArray[np.float_],
     cl_good: NDArray[np.bool_],
     channel_pos: NDArray[np.float_],
+    n_chan: int,
     minThreshDetectPeaksTroughs: float = 0.2,
 ) -> Tuple[NDArray[np.int_], NDArray[np.int_], NDArray[np.float_], NDArray[np.float_]]:
     """
@@ -263,6 +255,7 @@ def calc_wf_shape_metrics(
         mean_wf (NDArray[np.float_]): Array of mean waveforms.
         cl_good (NDArray[np.bool_]): Array indicating whether each waveform is good or not.
         channel_pos (NDArray[np.float_]): Array of channel positions.
+        n_chan (int): Number of channels.
         minThreshDetectPeaksTroughs (float, optional): Minimum threshold to detect peaks and troughs. Defaults to 0.2.
     Returns:
         Tuple[NDArray[int], NDArray[int], NDArray[float], NDArray[float]]: A tuple containing the following metrics:
@@ -272,7 +265,7 @@ def calc_wf_shape_metrics(
             - spat_decays: Array of spatial decay values for each waveform.
     """
     peak_chans = np.argmax(np.max(np.abs(mean_wf), axis=-1), axis=-1)
-    peak_chans[peak_chans >= 383] = 382
+    peak_chans[peak_chans >= n_chan - 2] = n_chan - 3
 
     num_peaks = np.zeros(mean_wf.shape[0], dtype="int8")
     num_troughs = np.zeros(mean_wf.shape[0], dtype="int8")
@@ -339,8 +332,4 @@ def calc_wf_shape_metrics(
 
 
 if __name__ == "__main__":
-    calc_metrics(
-        r"E://T01/20240612_Tate_T01/catgt_20240612_Tate_Test_Bank0_right_g0/20240612_Tate_Test_Bank0_right_g0_imec0/imec0_ks25",
-        r"E://T01/20240612_Tate_T01/catgt_20240612_Tate_Test_Bank0_right_g0/20240612_Tate_Test_Bank0_right_g0_imec0/20240612_Tate_Test_Bank0_right_g0_tcat.imec0.ap.bin",
-        385,
-    )
+    calc_metrics()

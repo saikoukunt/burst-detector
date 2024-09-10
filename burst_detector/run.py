@@ -1,18 +1,18 @@
+import json
+import os
 from typing import Any
 
-from argschema import ArgSchemaParser
+from marshmallow import EXCLUDE
 
 import burst_detector as bd
+from burst_detector.schemas import OutputParams, RunParams
 
 
 def main() -> None:
-    from burst_detector import AutoMergeParams
-
-    mod = ArgSchemaParser(schema_type=AutoMergeParams)
-    # TODO fix schema
-    if mod.args.get("max_spikes") is None:
-        mod.args["max_spikes"] = 1000
-    mst, xct, rpt, mt, tt, num_merge, oc = bd.run_merge(mod.args)
+    args = bd.parse_args()
+    schema = RunParams(unknown=EXCLUDE)
+    params = schema.load(args)
+    mst, xct, rpt, mt, tt, num_merge, oc = bd.run_merge(params)
 
     output: dict[str, Any] = {
         "mean_time": mst,
@@ -23,8 +23,19 @@ def main() -> None:
         "num_merges": num_merge,
         "orig_clust": oc,
     }
+    outschema = OutputParams()
+    outparams = outschema.load(output)
 
-    mod.output(output)
+    # if input json default to input json name -output.json
+    if params.get("output_json", None) is not None:
+        output_json = params["output_json"]
+    elif params.get("input_json", None) is not None:
+        output_json = params["input_json"].replace(".json", "-output.json")
+    else:
+        output_json = os.path.join(params["KS_folder"], "automerge", "run-output.json")
+
+    with open(output_json, "w") as f:
+        json.dump(outparams, f)
 
 
 if __name__ == "__main__":

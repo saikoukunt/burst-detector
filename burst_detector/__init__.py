@@ -11,7 +11,6 @@ from burst_detector.autoencoder import (
 from burst_detector.bursts import base_algo, find_bursts
 from burst_detector.cluster_metrics import calc_wf_norms, wf_means_similarity
 from burst_detector.plot import plot_corr, plot_merges, plot_wfs
-from burst_detector.schemas import AutoMergeParams, OutputParams
 from burst_detector.stages import (
     calc_ae_sim,
     calc_mean_sim,
@@ -25,6 +24,7 @@ from burst_detector.utils import (
     find_best_channels,
     find_times_multi,
     get_dists,
+    parse_args,
     spikes_per_cluster,
 )
 from burst_detector.xcorr import (

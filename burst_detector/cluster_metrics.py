@@ -32,8 +32,8 @@ def calc_wf_norms(wfs: NDArray[np.float_]) -> NDArray[np.float_]:
 def wf_means_similarity(
     mean_wf: NDArray[np.float_],
     cl_good: NDArray[np.bool_],
-    use_jitter: bool = False,
-    max_jitter: int = 4,
+    use_jitter,
+    max_jitter,
 ) -> tuple[NDArray[np.float_], NDArray[np.float_], NDArray[np.int_]]:
     """
     Calculates the normalized pairwise similarity (inner product) between pairs of
@@ -49,7 +49,7 @@ def wf_means_similarity(
             between waveforms. Defaults to False. Note that runtime scales linearly
             with jitter_amt if enabled.
         jitter_amt (int): The maximum amount of shift to search in both directions.
-            Defaults to 4. Note that runtime scales linearly with jitter_amt if enabled.
+            Note that runtime scales linearly with jitter_amt if enabled.
 
     Returns:
         mean_sim (NDArray): The (maximum) pairwise similarity for each pair of

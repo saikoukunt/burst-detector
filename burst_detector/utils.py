@@ -4,6 +4,8 @@ General utilities for ephys data-wrangling.
 Assumes that ephys data is stored in the phy output format.
 """
 
+import argparse
+import json
 import logging
 import os
 from typing import Any
@@ -19,13 +21,66 @@ import burst_detector as bd
 logger = logging.getLogger("burst-detector")
 
 
+def parse_args() -> dict[str, Any]:
+    """
+    Parse command line arguments for burst-detector, including plot_units.py, run.py, and custom_metrics.py.
+    Returns:
+        dict[str, Any]: A dictionary containing the parsed arguments.
+    """
+    # code implementation...
+    parser = argparse.ArgumentParser(description="Parse arguments for burst-detector")
+    # Define optional arguments
+    parser.add_argument("--input_json", type=str, help="Path to JSON file of arguments")
+    parser.add_argument("--KS_folder", type=str, help="Path to Kilosort folder")
+
+    # Parse arguments
+    args, unknown_args = parser.parse_known_args()
+    args = vars(args)
+    if args["input_json"]:
+        if os.path.exists(args["input_json"]):
+            if args["input_json"].endswith(".json"):
+                with open(args["input_json"], "r") as f:
+                    json_args = json.load(f)
+                    args.update(json_args)
+            else:
+                parser.error(
+                    "Input file must be a JSON file with .json file extension."
+                )
+        else:
+            parser.error(f"File {args['input_json']} does not exist")
+    del args["input_json"]
+    if not args["KS_folder"]:
+        parser.error(
+            "Please provide a Kilosort folder via --input_json or --KS_folder."
+        )
+    # Include unknown arguments
+    for key, value in zip(unknown_args[::2], unknown_args[1::2]):
+        # remove '--' from key
+        key = key[2:]
+        args[key] = value
+
+    # Process KS params.py file
+    ksparam_path = os.path.join(args["KS_folder"], "params.py")
+    ksparams = {}
+    with open(ksparam_path, "r") as f:
+        for line in f:
+            elem = line.split(sep="=")
+            ksparams[elem[0].strip()] = eval(elem[1].strip())
+    ksparams["data_filepath"] = os.path.join(
+        args["KS_folder"], ksparams.pop("dat_path")
+    )
+    ksparams["n_chan"] = ksparams.pop("n_channels_dat")
+    args.update(ksparams)
+    return args
+
+
 def find_times_multi(
     sp_times: NDArray[np.float_],
     sp_clust: NDArray[np.int_],
     clust_ids: list[int],
     data: NDArray[np.int_],
-    pre_samples: int = 20,
-    post_samples: int = 62,
+    pre_samples: int,
+    post_samples: int,
 ) -> list[NDArray[np.float_]]:
     """
     Finds all the spike times for each of the specified clusters.
@@ -87,9 +142,9 @@ def extract_spikes(
     data: NDArray[np.int_],
     times_multi: list[NDArray[np.float_]],
     clust_id: int,
-    pre_samples: int = 20,
-    post_samples: int = 62,
-    max_spikes: int = -1,
+    pre_samples: int,
+    post_samples: int,
+    max_spikes: int,
 ) -> NDArray[np.int_]:
     """
     Extracts spike waveforms for the specified cluster.
@@ -251,7 +306,10 @@ def get_closest_channels(
 
 
 def find_best_channels(
-    template: NDArray[np.float_], channel_pos: NDArray[np.float_], num_close: int
+    template: NDArray[np.float_],
+    channel_pos: NDArray[np.float_],
+    n_chan: int,
+    num_close: int,
 ) -> tuple[NDArray[np.int_], int]:
     """
     For a given waveform, finds the channels with the largest amplitude.
@@ -260,6 +318,7 @@ def find_best_channels(
         template (NDArray): The waveform to find the best channels for.
         channel_pos (NDArray): The XY coordinates of each channel on the probe
             (in arbitrary units).
+        n_chan (int): The number of channels on the probe.
         num_close (int): The number of closest channels to return, including the
             peak channel (channel with largest amplitude).
 
@@ -270,7 +329,7 @@ def find_best_channels(
 
     """
     amplitude: NDArray[np.float_] = template.max(axis=1) - template.min(axis=1)
-    peak_channel: int = min(int(np.argmax(amplitude)), 382)
+    peak_channel: int = min(int(np.argmax(amplitude)), n_chan - 3)
     close_chans: NDArray[np.int_] = get_closest_channels(
         channel_pos, peak_channel, num_close
     )
@@ -361,6 +420,8 @@ def temp_mismatch(
     clust_id: int,
     templates: list,
     channel_pos: NDArray[np.float_],
+    n_chan: int,
+    num_close: int,
     mean_wf: NDArray[np.float_],
 ) -> float:
     """
@@ -369,11 +430,15 @@ def temp_mismatch(
         clust_id (int): The ID of the cluster.
         templates (list): List of templates.
         channel_pos (NDArray): Array of channel positions.
+        n_chan (int): Number of channels.
+        num_close (int): Number of closest channels to consider.
         mean_wf (NDArray): Array of mean waveforms.
     Returns:
         mismatch (float): The magnitude and direction of the temporal mismatch.
     """
-    ch_ids, peak_channel = find_best_channels(templates[clust_id])
+    ch_ids, peak_channel = find_best_channels(
+        templates[clust_id], channel_pos, n_chan, num_close
+    )
 
     # calculate and rank distances (proximity)
     dists = get_dists(channel_pos, peak_channel, ch_ids)
