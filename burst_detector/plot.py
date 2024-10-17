@@ -2,6 +2,7 @@ import math
 import os
 from typing import Any
 
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
@@ -10,6 +11,8 @@ from numpy.typing import NDArray
 from tqdm import tqdm
 
 import burst_detector as bd
+
+matplotlib.use("Agg")
 
 
 ### PLOTTING CODE

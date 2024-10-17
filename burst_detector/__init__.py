@@ -1,6 +1,8 @@
 import logging
 import sys
 
+import burst_detector.custom_metrics as custom_metrics
+import burst_detector.run as run
 from burst_detector.algo import run_merge
 from burst_detector.autoencoder import (
     CN_AE,
@@ -10,6 +12,12 @@ from burst_detector.autoencoder import (
 )
 from burst_detector.bursts import base_algo, find_bursts
 from burst_detector.cluster_metrics import calc_wf_norms, wf_means_similarity
+from burst_detector.custom_metrics import (
+    calc_sliding_RP_viol,
+    calc_SNR,
+    calc_wf_shape_metrics,
+    extract_noise,
+)
 from burst_detector.plot import plot_corr, plot_merges, plot_wfs
 from burst_detector.stages import (
     calc_ae_sim,
@@ -24,7 +32,8 @@ from burst_detector.utils import (
     find_best_channels,
     find_times_multi,
     get_dists,
-    parse_args,
+    parse_cmd_line_args,
+    parse_kilosort_params,
     spikes_per_cluster,
 )
 from burst_detector.xcorr import (
