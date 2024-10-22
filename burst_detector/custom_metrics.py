@@ -35,6 +35,7 @@ def extract_noise(
         NDArray: The noise snippets array.
     """
     # extraction loop
+    # TODO make 2000 a parameter?
     noise = np.zeros((n_chan, 2000 * (pre_samples + post_samples)))
 
     ind = 0
@@ -69,11 +70,11 @@ def extract_noise(
     return noise
 
 
-def calc_metrics() -> None:
+def main(args: dict = None) -> None:
     """
     Calculate various metrics for spike sorting.
     """
-    args = bd.parse_args()
+    args = bd.parse_kilosort_params(args)
     schema = CustomMetricsParams(unknown=EXCLUDE)
     params = schema.load(args)
 
@@ -114,10 +115,10 @@ def calc_metrics() -> None:
     )
     noise_stds = np.std(noise, axis=1)
 
-    snrs = calc_SNR(mean_wf, noise_stds, cl_good, n_chan)
-    slid_rp_viols = calc_sliding_RP_viol(times_multi, cl_good, n_clust)
+    snrs = calc_SNR(mean_wf, noise_stds, good_ids)
+    slid_rp_viols = calc_sliding_RP_viol(times_multi, good_ids, n_clust)
     num_peaks, num_troughs, wf_durs, spat_decays = calc_wf_shape_metrics(
-        mean_wf, cl_good, channel_pos, n_chan, 0.2
+        mean_wf, good_ids, channel_pos
     )
 
     # make dataframes
@@ -135,7 +136,6 @@ def calc_metrics() -> None:
         }
     )
 
-    np.save(os.path.join(ks_folder, "mean_waveforms.npy"), mean_wf)
     # write tsv
     snr_df.to_csv(os.path.join(ks_folder, "cluster_SNR_good.tsv"), sep="\t")
     srv_df.to_csv(os.path.join(ks_folder, "cluster_RP_conf.tsv"), sep="\t")
@@ -145,16 +145,14 @@ def calc_metrics() -> None:
 def calc_SNR(
     mean_wf: NDArray[np.float_],
     noise_stds: NDArray[np.float_],
-    cl_good: NDArray[np.bool_],
-    n_chan: int,
+    clust_ids: NDArray[np.bool_],
 ) -> NDArray[np.float_]:
     """
     Calculates the signal-to-noise ratio (SNR) for each waveform.
     Parameters:
     - mean_wf (NDArray): Array of shape (n_waveforms, n_samples, n_channels) representing the mean waveforms.
     - noise_stds (NDArray): Array of shape (n_channels,) representing the standard deviation of the noise for each channel.
-    - cl_good (NDArray): Boolean array of shape (n_waveforms,) indicating whether each waveform is considered good or not.
-    - n_chan (int): Number of channels.
+    - clust_ids (NDArray): Cluster ids to calculate SNR for. Rest will be zeros.
     Returns:
     - snrs (NDArray): Array of shape (n_waveforms,) representing the SNR for each waveform.
     """
@@ -162,14 +160,13 @@ def calc_SNR(
     logger.info("Calculating peak channels and amplitudes")
     # calculate peak chans, amplitudes
     peak_chans = np.argmax(np.max(np.abs(mean_wf), axis=-1), axis=-1)
-    peak_chans[peak_chans == n_chan - 1] = n_chan - 2
+    peak_chans[peak_chans == 384] = 383  # TODO hacky fix
     amps = np.max(np.max(np.abs(mean_wf), axis=-1), axis=-1)
 
     # calculate snrs
     snrs = np.zeros(mean_wf.shape[0])
-    for i in range(snrs.shape[0]):
-        if cl_good[i]:
-            snrs[i] = amps[i] / noise_stds[int(peak_chans[i])]
+    for i in clust_ids:
+        snrs[i] = amps[i] / noise_stds[int(peak_chans[i])]
 
     return snrs
 
@@ -193,7 +190,7 @@ def max_cont(fr: float, rp: float, rec_dur: float, acc_cont: float) -> float:
 
 def calc_sliding_RP_viol(
     times_multi: list[NDArray[np.float_]],
-    cl_good: NDArray[np.bool_],
+    clust_ids: NDArray[np.int_],
     n_clust: int,
     bin_size: float = 0.25,
     acceptThresh: float = 0.25,
@@ -202,8 +199,8 @@ def calc_sliding_RP_viol(
     Calculate the sliding refractory period violation confidence for each cluster.
     Args:
         times_multi (list[NDArray[np.float_]]): A list of arrays containing spike times for each cluster.
-        cl_good (NDArray[np.bool_]): An array indicating whether each cluster is considered good or not.
-        n_clust (int): The number of clusters.
+        clust_ids (NDArray[np.int_]): An array indicating cluster_ids to process. Should be "good" clusters.
+        n_clust (int): The total number of clusters (shape of mean_wf or max_clust_id + 1).
         bin_size (float, optional): The size of each bin in milliseconds. Defaults to 0.25.
         acceptThresh (float, optional): The threshold for accepting refractory period violations. Defaults to 0.25.
     Returns:
@@ -215,9 +212,9 @@ def calc_sliding_RP_viol(
 
     RP_conf = np.zeros(n_clust, dtype=np.float32)
 
-    for i in tqdm(range(n_clust), desc="Calculating RP viol confs"):
+    for i in tqdm(clust_ids, desc="Calculating RP viol confs"):
         times = times_multi[i] / 30000
-        if cl_good[i] and times.shape[0] > 1:
+        if times.shape[0] > 1:
             # calculate and avg halves of acg
             acg = bd.auto_correlogram(times, 2, bin_size / 1000, 5 / 30000)
             half_len = int(acg.shape[0] / 2)
@@ -244,18 +241,16 @@ def calc_sliding_RP_viol(
 
 def calc_wf_shape_metrics(
     mean_wf: NDArray[np.float_],
-    cl_good: NDArray[np.bool_],
+    clust_ids: NDArray[np.int_],
     channel_pos: NDArray[np.float_],
-    n_chan: int,
     minThreshDetectPeaksTroughs: float = 0.2,
 ) -> Tuple[NDArray[np.int_], NDArray[np.int_], NDArray[np.float_], NDArray[np.float_]]:
     """
     Calculate waveform shape metrics.
     Args:
         mean_wf (NDArray[np.float_]): Array of mean waveforms.
-        cl_good (NDArray[np.bool_]): Array indicating whether each waveform is good or not.
+        clust_ids (NDArray[np.int_]): Array of cluster id's to calcualte waveform metrics for, typically "good" clusters.
         channel_pos (NDArray[np.float_]): Array of channel positions.
-        n_chan (int): Number of channels.
         minThreshDetectPeaksTroughs (float, optional): Minimum threshold to detect peaks and troughs. Defaults to 0.2.
     Returns:
         Tuple[NDArray[int], NDArray[int], NDArray[float], NDArray[float]]: A tuple containing the following metrics:
@@ -265,71 +260,63 @@ def calc_wf_shape_metrics(
             - spat_decays: Array of spatial decay values for each waveform.
     """
     peak_chans = np.argmax(np.max(np.abs(mean_wf), axis=-1), axis=-1)
-    peak_chans[peak_chans >= n_chan - 2] = n_chan - 3
+    peak_chans[peak_chans >= 383] = 382  # TODO hacky fix
 
     num_peaks = np.zeros(mean_wf.shape[0], dtype="int8")
     num_troughs = np.zeros(mean_wf.shape[0], dtype="int8")
     wf_durs = np.zeros(mean_wf.shape[0], dtype=np.float32)
     spat_decays = np.zeros(mean_wf.shape[0], dtype=np.float32)
 
-    for i in range(mean_wf.shape[0]):
-        if cl_good[i]:
-            peak_wf = mean_wf[i, peak_chans[i], :]
+    for i in clust_ids:
+        peak_wf = mean_wf[i, peak_chans[i], :]
 
-            # count peaks and troughs
-            minProminence = minThreshDetectPeaksTroughs * np.max(np.abs(peak_chans))
-            peak_locs, _ = signal.find_peaks(peak_wf, prominence=minProminence)
-            trough_locs, _ = signal.find_peaks(-1 * peak_wf, prominence=minProminence)
-            num_peaks[i] = max(peak_locs.shape[0], 1)
-            num_troughs[i] = max(trough_locs.shape[0], 1)
+        # count peaks and troughs
+        minProminence = minThreshDetectPeaksTroughs * np.max(np.abs(peak_chans))
+        peak_locs, _ = signal.find_peaks(peak_wf, prominence=minProminence)
+        trough_locs, _ = signal.find_peaks(-1 * peak_wf, prominence=minProminence)
+        num_peaks[i] = max(peak_locs.shape[0], 1)
+        num_troughs[i] = max(trough_locs.shape[0], 1)
 
-            # calculate wf width
-            peak_loc = np.argmax(peak_wf)
-            trough_loc = np.argmax(-1 * peak_wf)
-            wf_dur = np.abs(peak_loc - trough_loc) / 30
-            wf_durs[i] = wf_dur
+        # calculate wf width
+        peak_loc = np.argmax(peak_wf)
+        trough_loc = np.argmax(-1 * peak_wf)
+        wf_dur = np.abs(peak_loc - trough_loc) / 30
+        wf_durs[i] = wf_dur
 
-            # calculate spatial decay
-            channels_with_same_x = np.squeeze(
-                np.argwhere(
-                    np.abs(channel_pos[:, 0] - channel_pos[peak_chans[i], 0]) <= 33
-                )
+        # calculate spatial decay
+        channels_with_same_x = np.squeeze(
+            np.argwhere(np.abs(channel_pos[:, 0] - channel_pos[peak_chans[i], 0]) <= 33)
+        )
+        if channels_with_same_x.shape[0] > 5:
+            peak_idx = np.squeeze(np.argwhere(channels_with_same_x == peak_chans[i]))
+
+            if peak_idx > 5:
+                channels_for_decay_fit = channels_with_same_x[
+                    peak_idx : peak_idx - 5 : -1
+                ]
+            else:
+                channels_for_decay_fit = channels_with_same_x[peak_idx : peak_idx + 5]
+
+            spatialDecayPoints = np.max(
+                np.abs(mean_wf[i, channels_for_decay_fit, :]), axis=0
             )
-            if channels_with_same_x.shape[0] > 5:
-                peak_idx = np.squeeze(
-                    np.argwhere(channels_with_same_x == peak_chans[i])
-                )
+            estimatedUnitXY = channel_pos[peak_chans[i], :]
+            relativePositionsXY = (
+                channel_pos[channels_for_decay_fit, :] - estimatedUnitXY
+            )
+            channelDists_relative = np.sqrt(np.nansum(relativePositionsXY**2, axis=1))
 
-                if peak_idx > 5:
-                    channels_for_decay_fit = channels_with_same_x[
-                        peak_idx : peak_idx - 5 : -1
-                    ]
-                else:
-                    channels_for_decay_fit = channels_with_same_x[
-                        peak_idx : peak_idx + 5
-                    ]
+            indSort = np.argsort(channelDists_relative)
+            spatialDecayPoints_norm = spatialDecayPoints[indSort]
+            spatialDecayFit = np.polyfit(
+                channelDists_relative[indSort], spatialDecayPoints_norm, 1
+            )
 
-                spatialDecayPoints = np.max(
-                    np.abs(mean_wf[i, channels_for_decay_fit, :]), axis=0
-                )
-                estimatedUnitXY = channel_pos[peak_chans[i], :]
-                relativePositionsXY = (
-                    channel_pos[channels_for_decay_fit, :] - estimatedUnitXY
-                )
-                channelDists_relative = np.sqrt(
-                    np.nansum(relativePositionsXY**2, axis=1)
-                )
-
-                indSort = np.argsort(channelDists_relative)
-                spatialDecayPoints_norm = spatialDecayPoints[indSort]
-                spatialDecayFit = np.polyfit(
-                    channelDists_relative[indSort], spatialDecayPoints_norm, 1
-                )
-
-                spat_decays[i] = spatialDecayFit[0]
+            spat_decays[i] = spatialDecayFit[0]
 
     return num_peaks, num_troughs, wf_durs, spat_decays
 
 
 if __name__ == "__main__":
-    calc_metrics()
+    args = bd.parse_cmd_line_args()
+    main(args)

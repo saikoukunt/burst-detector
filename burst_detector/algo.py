@@ -30,7 +30,10 @@ def run_merge(params: dict[str, Any]) -> tuple[str, str, str, str, str, int, int
         os.path.join(params["KS_folder"], "spike_clusters.npy")
     ).flatten()
     cl_labels: pd.DataFrame = pd.read_csv(
-        os.path.join(params["KS_folder"], "cluster_group.tsv"), sep="\t"
+        os.path.join(params["KS_folder"], "cluster_group.tsv"),
+        sep="\t",
+        names=["cluster_id", "KSLabel"],
+        header=0,
     )
     cl_labels.set_index("cluster_id", inplace=True)
 

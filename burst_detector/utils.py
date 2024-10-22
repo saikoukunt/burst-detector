@@ -21,7 +21,7 @@ import burst_detector as bd
 logger = logging.getLogger("burst-detector")
 
 
-def parse_args() -> dict[str, Any]:
+def parse_cmd_line_args() -> dict[str, Any]:
     """
     Parse command line arguments for burst-detector, including plot_units.py, run.py, and custom_metrics.py.
     Returns:
@@ -58,7 +58,10 @@ def parse_args() -> dict[str, Any]:
         # remove '--' from key
         key = key[2:]
         args[key] = value
+    return args
 
+
+def parse_kilosort_params(args: dict) -> dict[str, Any]:
     # Process KS params.py file
     ksparam_path = os.path.join(args["KS_folder"], "params.py")
     ksparams = {}
@@ -169,16 +172,15 @@ def extract_spikes(
             (# of spikes, # of channels, # of timepoints).
     """
     times = times_multi[clust_id].astype("int64")
-
-    # This should not matter as dealt with in times_multi
-    # Ignore spikes that are cut off by the ends of the recording
-    times = times[(times >= pre_samples) & (times < data.shape[0] - post_samples)]
+    # spikes cut off by the ends of the recording is handled in times_multi
+    # times = times[(times >= pre_samples) & (times < data.shape[0] - post_samples)]
 
     # Randomly pick spikes if the cluster has too many
     if (max_spikes != -1) and (times.shape[0] > max_spikes):
         np.random.shuffle(times)
         times = times[:max_spikes]
 
+    # Create an array to store the spikes
     # Extract spike data around each spike time and avoid for loops for speed
     start_times = times - pre_samples
     n_spikes = len(start_times)
@@ -192,7 +194,9 @@ def extract_spikes(
     row_indices = np.arange(n_samples).reshape(-1, 1) + start_times
 
     # Extract the spikes using advanced indexing
-    spikes = data[row_indices, :].transpose(1, 2, 0)
+    spikes = data[row_indices, :].transpose(
+        1, 2, 0
+    )  # Shape (n_spikes, n_channels, n_samples)
 
     return spikes
 
@@ -225,12 +229,11 @@ def calc_mean_and_std_wf(
     mean_wf_path = os.path.join(params["KS_folder"], "mean_waveforms.npy")
     std_wf_path = os.path.join(params["KS_folder"], "std_waveforms.npy")
 
-    try:
+    spikes = {}
+    if os.path.exists(mean_wf_path) and os.path.exists(std_wf_path):
         mean_wf = np.load(mean_wf_path)
         std_wf = np.load(std_wf_path)
-        spikes = None
         if return_spikes:
-            spikes = {}
             # Extracting spikes is faster than saving and loading them from file
             for i in tqdm(cluster_ids, desc="Loading spikes"):
                 spikes_i = extract_spikes(
@@ -242,7 +245,9 @@ def calc_mean_and_std_wf(
                     params["max_spikes"],
                 )
                 spikes[i] = spikes_i
-    except FileNotFoundError and OSError:
+
+    else:
+
         mean_wf = cp.zeros(
             (
                 n_clusters,
@@ -251,9 +256,8 @@ def calc_mean_and_std_wf(
             )
         )
         std_wf = cp.zeros_like(mean_wf)
-        spikes = {}
         for i in tqdm(cluster_ids, desc="Calculating mean and std waveforms"):
-            spikes_i = extract_spikes(
+            spikes[i] = extract_spikes(
                 data,
                 spike_times,
                 i,
@@ -261,16 +265,14 @@ def calc_mean_and_std_wf(
                 params["post_samples"],
                 params["max_spikes"],
             )
-            spikes_cp = cp.asarray(spikes_i)
+            spikes_cp = cp.array(spikes[i])
             mean_wf[i, :, :] = cp.mean(spikes_cp, axis=0)
             std_wf[i, :, :] = cp.std(spikes_cp, axis=0)
-            spikes[i] = spikes_i
 
         logger.info("Saving mean and std waveforms...")
         cp.save(mean_wf_path, mean_wf)
         cp.save(std_wf_path, std_wf)
-
-        # convert to numpy
+        # Convert to numpy arrays
         mean_wf = cp.asnumpy(mean_wf)
         std_wf = cp.asnumpy(std_wf)
     return mean_wf, std_wf, spikes
