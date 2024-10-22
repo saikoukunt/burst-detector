@@ -1,1 +1,1 @@
-# burst-detector
+# Spike-sorting Lapse Amelioration System (SLAy)
